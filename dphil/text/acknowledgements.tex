@@ -1,0 +1,35 @@
+
+This work was jointly funded by an AFR PhD grant from the Luxembourg National Research Fund and an ESRC (Economic and Social Research Council) Doctoral Training Partnership in collaboration with the Oxford-Man Institute of Quantitative Finance. I shall be eternally grateful to these institutions, without whom this thesis would have never happened, especially to the Luxembourg National Research Fund for providing the largest share of funding.
+
+Personally, I would like to thank:
+
+My daughter Vicky, for inspiring me to apply to the University of Oxford and keeping me motivated to hang in there during all those tough years that we lived 6,300 miles apart;
+
+My wife Jessi, for letting me live in her apartment for free while we were still dating and for believing in my success;
+
+My mom Edith, for loaning me vast amounts of money without complaint and always supporting me in all my endeavours;
+
+My son Johann, for giving me the second bout of enthusiasm that I needed to stay the course as this thesis was close to completion;
+
+My supervisors Steve Roberts and Mike Osborne, for accepting me into the programme despite my non-traditional academic background, shielding me from all administrative formalities, allowing me complete academic freedom and not being too upset by how long this thesis process took;
+
+\begin{mccorrection}
+Stefan Zohren, one of the examiners at the confirmation of my DPhil status, for identifying a close relationship between my research and adaptive gradient methods, which led to a coauthored paper on the training of Bayesian neural networks via such methods, as well as a thesis chapter on the use of Bayesian tools for the automatic determination of the learning rate parameter in the context of dynamic online optimisation.
+\end{mccorrection}
+
+\newpage
+
+My thesis is based on a couple of joint-authored publications listed below, followed by a description of my contribution to them.
+
+\begin{itemize}[label={}]
+	\item A. Salas, S. Roberts and M. Osborne. A Variational Bayesian State-Space Approach to Online Passive-Aggressive Regression. \emph{CoRR}, abs/1509.02438, 2015.
+
+%	\item S. Kessler, A. Salas, V. T. W. Choon, S. Zohren and S. Roberts. Practical Bayesian Neural Networks via Adaptive Subgradient Optimization Methods. In \emph{ICML 2020 Workshop on Uncertainty and Robustness in Deep Learning}, 2020.
+\begin{mccorrection}
+	\item S. Kessler, A. Salas, V. W. C. Tan, S. Zohren and S. Roberts. Practical Bayesian Neural Networks via Adaptive Optimization Methods. In \emph{ICML 2020 Workshop on Uncertainty and Robustness in Deep Learning}, 2020.
+\end{mccorrection}
+\end{itemize}
+
+I contributed the idea, problem setup, all theory and experiments for the first work. Roberts implemented the sequential Kalman filter tested against, while Osborne supplied the wind speed data. Both Roberts and Osborne provided guidance on the general approach and inference schemes. 
+
+As for the second paper, Zohren came up with the idea and problem motivation. I proposed the Bayesian approach, and contributed the preliminaries in addition to the probabilistic interpretation of adaptive methods. Zohren carried out the MNIST classification experiment, while Kessler contributed additional experiments, including the application to contextual bandit problems. Additionally, Kessler reinforced the theoretical framework. Roberts provided advice on general theory and practical issues.

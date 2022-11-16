@@ -1,0 +1,99 @@
+\chapter{\label{ch:ch1}Introduction}
+
+\minitoc
+
+
+
+
+Today, whether we consider data sets from the internet, consumers or financial markets, a common feature emerges: all of them involve huge amounts of dynamic data that arrive sequentially and need to be understood and processed quickly.
+
+Online learning is concerned with the task of making decisions on the fly as observations are received. The field has attracted a lot of attention due to the recent emergence of large-scale applications such as online web advertisement placement, online topic detection, online web ranking, finding the shortest path for internet packet routing, email spam filtering, portfolio selection and many more.
+
+While online learning can be used for temporal data, its stochastic counterpart can be used for large-scale learning tasks, by treating the training data as a stream and processing each data object only once. In particular, one can solve a batch problem by processing one or a mini-batch of data points at a time, e.g.\ in image classification, text categorisation, bioinformatics (protein classification, cancer classification), and so on.
+
+Online algorithms and their stochastic counterparts share two key properties. Firstly, they are computationally efficient. Each step has no dependence on the data size and there is no need to store the entire training set in memory. The total number of steps is of the same order as of the number of examples. Secondly, they achieve theoretical performance guarantees that are competitive compared to their batch counterparts (which have access to the entire data). For all the aforementioned reasons, the study of online learning algorithms is an increasingly important area in machine learning, in addition to its interesting theoretical properties and practical applications.
+
+
+
+
+\section{Why Online Learning?}
+
+With the ever increasing amount of data, there has been a growing amount of interest in scalable machine learning algorithms over recent years. In this context, many common approaches fail, simply because they cannot load the data into memory, or they are not efficient enough. Below we discuss a few areas in which online learning is applied.
+\begin{enumerate}
+	\item Social media are pervasive nowadays. Twitter receives over 400 million tweets per day from its users. As microblogging sites gained popularity, a myriad of trend analytics applications have emerged. An example of one such task is the automatic identification of breaking news in a stream of tweets. This requires the detection of novel tweets among a voluminous stream in a scalable manner. The high volume and velocity of such data make them an ideal candidate
+for online learning.
+
+	\item Supervised learning (e.g.\ logistic regression, support vector machines) on large data sets containing millions of data points can be computationally expensive. For example, the Google brain consists of 20 million images. Iterative methods running over an entire data set usually have a runtime that depends on the size of the data, and hence the per-iteration complexity becomes a computational bottleneck. The alternative is to process one data point at a time, by treating the
+huge data set as a stream for online convex optimisation.% This reduces the per-iteration complexity, but might increase the number of iterations for the optimisation algorithms.
+
+	\item In financial data analysis, the data also arrive in a streaming fashion. One notable problem in this context is \emph{online portfolio selection} which consists in sequentially distributing wealth among a universe of assets. At the beginning of every rebalancing period (e.g.\ a business day), an investor has to choose a portfolio without knowing the performance of the underlying assets for that particular period a priori. At the end of the period, the investor receives feedback from the market, in the form of each asset's return over that period, and incurs the gain or loss associated with her portfolio choice. The objective is to maximise her wealth at the end of the trading horizon, i.e.\ the total number of periods during which the investor intends to trade.
+\end{enumerate}
+
+Online portfolio selection has been a success story \citep{cover, eg, lugosi, ons, borodin04, cwmr, olps-survey} over the last two decades. Online portfolio selection algorithms modelled in the online convex optimisation framework make no statistical assumptions regarding the movement of asset prices \citep{cover, eg} and, in a well-defined technical sense, are guaranteed to be competitive relative to certain families of adaptive portfolios, even in an adversarial market. In this thesis, we particularly focus on online portfolio selection as an illustration of our key contributions to the field of online learning.
+
+
+
+
+\section{Research Scope and Methodology}
+
+Our research is primarily focused on Bayesian inference in online supervised learning models. The majority of online algorithms are frequentist in nature, meaning they lack to provide a principled measure of uncertainty in the estimation of their underlying parameters. Furthermore, their practical performance relies heavily on a set of hyperparameters and there is usually no clear systematic guidance on how to choose appropriate values for them, making it hard to practitioners to deploy these algorithms. The motivation behind this thesis is that a Bayesian treatment of online learning provides an elegant and principled framework to deal with these shortcomings.
+
+Our approach to online Bayesian inference is standard in that it starts from a maximum a posteriori interpretation of the objective function that the underlying frequentist online algorithm optimises over its parameters. This not only allows us to obtain the posterior distribution that the algorithm implicitly imposes over its parameters, but also the implicit hyperparameter posterior, via the underlying marginal likelihood. As such, we are not only able to infer the uncertainty over model parameters, but also a data-driven mechanism to set optimal values for the hyperparameters. When no closed-form algorithm is available or efficient, we have taken the approach of analytical approximation, rather than stochastic approaches. In particular, we have not undertaken any work in the field of estimation of posteriors through sampling, since our main focus is on understanding the mathematical properties relating to exact probabilistic inference in online supervised learning. When exact inference is not possible, we aim to understand which are the mildest analytical approximation schemes that render the inference problem tractable.
+
+Our contributions aim to be methodological with broad applicability; we have however placed our focus on the area of online portfolio selection towards the end of Part II. This has been motivated not only by the non-stationary nature of financial time series and the danger of overfitting to historical data, but also by the main author's background in finance and his desire to pursue a career in quantitative investment management following graduation.
+
+
+
+
+\section{Contribution}
+
+The contributions of this thesis can be ascribed to three main planks, each forming one of three main chapters. First, we discuss the limitations of online passive-aggressive learning, a popular framework in the field of online learning, and demonstrate how to address them. We extend the framework to allow general loss functions (for both classification and regression), and introduce a unified Bayesian treatment that accommodates probabilistic predictions and automatic hyperparameter tuning. Remarkably, the resulting model bears a close ressemblance to the Kalman filter, bridging the gap between the seemingly disparate literatures of online learning and Bayesian filtering.
+
+Second, we discuss the problem of tuning the learning rate parameter in online gradient descent, a key algorithm for solving online convex optimisitation as well as large-scale learning problems. By appealing to our earlier work on online Bayesian passive-aggressive learning, we derive a data-dependent mechanism to automatically tune the learning rate. This bypasses the requirement for traditional heuristics, and is applicable beyond the area of online convex optimisation, in particular in the training of neural networks, as discussed in a separate paper of which the main author of this thesis is a coauthor.
+
+Third, we take a slightly different tack and present a novel approach to online portfolio selection. We show that our Bayesian-inspired approach in this framework is empirically superior to classical techniques, while remaining simple, flexible and computationally efficient.
+
+ 
+
+\section{Thesis Structure}
+
+The main body of this thesis is split into three parts. Part I includes this introductory chapter and goes on to set out significant background material relevant to the results of the proceeding work. Part II comprises the main novel analytical contribution of the thesis and is split into three chapters, including an empirical evaluation of the algorithms developed in the first three chapters. Taken together, the three planks of work are related under the broader umbrella of novel approaches to online learning and its application to portfolio selection. Finally, Part III ties the thesis together by providing summary conclusions of Part II and discusses some opportunities for further study. Several appendices are also included, setting out some key definitions and derivations.
+
+
+
+
+\section{Notation}
+
+We have tried to use a consistent notation throughout the thesis, although at times this means departing from some of the conventions used in the corresponding research literature. Variables are written as lower-case letters such as $x$. Vectors are denoted by lower-case bold Roman letters such as $\mathbf{x}$, and all vectors are assumed to be column vectors. A superscript $\text{T}$ denotes the transpose of a matrix or vector, so that $\mathbf{x}^\text{T}$ will be a row vector\footnote{This superscript shall mainly be used to denote the dot (inner) product between two vectors, i.e.\ $\mathbf{x}^\text{T}\mathbf{y} \equiv \sum_{i=1}^n x_{i}y_{i}$ signifies the dot product between two $n$-dimensional vectors $\mathbf{x}$ and $\mathbf{y}$. For this purpose, we shall also invariably use the symbol "$\cdot$", as in $\mathbf{x} \cdot \mathbf{y} \equiv \mathbf{x}^\text{T}\mathbf{y}$.}. Upper-case bold roman letters, such as $\mathbf{M}$, denote matrices. For time
+series, the sequential index is given by a subscript such as $x_{t}$ for the value of variable $x$ at point $t$. When considering collections of the variable $x$ over a set of indices ${a, a + 1, \ldots, b-1, b}$, we abbreviate the series $x_a, \ldots, x_b \equiv x_{a:b}$. In the case $b < a$, we assume $x_{a:b} = \emptyset$, and also $x_a = \emptyset$ for all $a < 1$.
+
+%The notation $[a, b]$ is used to denote the closed interval from $a$ to $b$, that is the interval including the values $a$ and $b$ themselves, while $(a, b)$ denotes the corresponding open interval, that is the interval excluding $a$ and $b$. Similarly, $[a, b)$ denotes an interval that includes $a$ but excludes $b$. For the most part, however, there will be little need to dwell on such refinements as whether the end points of an interval are included or not.
+\begin{mccorrection}
+The notation $[a, b]$ is used to denote the closed interval from $a$ to $b$, that is the interval including the values $a$ and $b$ themselves, while $(a, b)$ denotes the corresponding open interval, that is the interval excluding $a$ and $b$. Similarly, $[a, b)$ denotes an interval that includes $a$ but excludes $b$. For the most part, however, there will be little need to dwell on such refinements as whether the end points of an interval are included or not. Another notational convetion that shall be common in this thesis is the symbol $[n]$ for a positive integer $n$, which shall signify the set $\{1, 2, \ldots, n\}$.
+\end{mccorrection}
+
+The $n \times n$ identity matrix (also known as the unit matrix) is denoted $\mathbf{I}_n$, which will be abbreviated to $\mathbf{I}$ where there is no ambiguity about its dimensionality.
+It has elements $I_{ij}$ that equal 1 if $i = j$ and 0 if $i \neq j$. Similarly, $\mathbf{0}_{n \times m}$ denotes a $n \times m$ matrix all the entries of which are zero, while $\mathbf{1}_{n \times m}$ is a $n \times m$ matrix whose elements are all equal to 1. When it is clear from the context, these will be abbreviated to $\mathbf{0}$ and $\mathbf{1}$, respectively.
+
+Throughout the thesis, the operator $p(\cdot)$ represents a probability density function in an intuitive way. The distribution of a random variable $x$ conditioned on another random variable $y$ is written as $p(x|y)$. Density functions, along with some interesting properties, for the relevant distributions are given in Appendix~\ref{ch:probability-distributions}.
+
+A major consideration in Bayesian inference is marginalisation, or `summing out' variables from a distribution. For continuous variables, we write this as
+\begin{equation}
+	\int p(x, y) \, \mathrm{d}x = p(y).
+\end{equation}
+When the variable of integration is an $n$-dimensional vector $\mathbf{x}$, we use the compact notation $\mathrm{d}\mathbf{x} = \mathrm{d}\mathbf{x}_1 \mathrm{d}\mathbf{x}_2 \ldots \mathrm{d}\mathbf{x}_n$. When the context is clear, we shall use a condensed integral notation: all integrals are definite integrals over the entire domain of interest.
+
+Finally, angled brackets represent expectation:
+\begin{equation}
+	\langle f(x) \rangle \equiv \mathbb{E}[f(x)] = \int f(x) p(x) \, \mathrm{d}x. 
+\end{equation}
+
+
+
+
+\begin{mccorrection}
+\section{A Caveat About Our `Bayesian' Approach}
+
+Some readers may feel that the author overemphasised the Bayesian nature of the methods developed in this thesis. As a result of this, we woud like to clarify at this point that, by referring to an approach as `Bayesian', we shall henceforth mean that such approach is \emph{approximately} or \emph{partially} Bayesian, in the sense that this approach does not involve marginalising out hyperparameter uncertainty, but resorts to point estimates instead, by optimising the relevant (approximate) marginal likelihood function.
+
+\end{mccorrection}

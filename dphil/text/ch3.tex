@@ -1,0 +1,1089 @@
+\chapter{Online Portfolio Selection}
+\label{ch:olps}
+
+\minitoc
+
+
+
+
+Online portfolio selection is a fundamental problem in computational finance, which has been extensively studied across several research communities, including finance, statistics, artificial intelligence, machine learning, and data mining. This chapter -- a summarised version of \citep{olps-survey} -- aims to provide an overview and structural understanding of the most well-known techniques used in the literature.
+%We first formulate online portfolio selection as a sequential decision problem, and then survey a variety of state-of-the-art approaches grouped into several categories, including benchmark, follow-the-winner, follow-the-loser, pattern-matching and meta-learning algorithms. In addition to the problem formulation and related algorithms, we cover the relationship between these algorithms and capital growth theory so as to better understand their similarities and differences. Finally, we discuss some open issues and evaluate some emerging new trends for future research.
+
+
+
+
+\section{Introduction}
+
+Portfolio selection aims to optimise the allocation of wealth across a set of assets, and is considered a fundamental research problem in computational finance. There are two major schools of thought: \emph{i}) mean-variance theory \citep{markowitz52, markowitz59, markowitz00} which originated in the finance community, and \emph{ii}) capital growth theory (CGT) \citep{kelly, hakansson95} which has its roots in information theory. Mean-variance theory, widely known in the asset management industry, focuses on single-period (batch) portfolio selection and trades off a portfolio's expected return (mean) vs its risk (variance), which typically determines the optimal portfolios subject to the investor's risk-return profile. CGT, on the other hand, focuses on multiple-period or sequential portfolio selection, seeking to maximise the portfolio's expected growth rate, or expected log return. Although both theories solve the task of portfolio selection, the latter is more aligned with the `online' scenario, which naturally consists of multiple periods and is the focus of this thesis.
+
+The goal of online portfolio selection is to sequentially select a portfolio of assets so as to achieve certain targets. Several algorithms have been proposed to solve this task and can be broadly grouped into three categories, namely \emph{follow the winner}, \emph{follow the loser} and \emph{pattern matching}. In the spirit of CGT, follow-the-winner algorithms try to asymptotically achieve the same growth rate (expected log return) as that of an optimal strategy. In contrast, follow the loser strategies transfer wealth from overperforming to underperforming assets, which may seem counterintuitive, but often leads to significantly better performance in practice. The third category, the pattern-matching approach, tries to predict the next market distribution based on historical data, and explicitly optimises the portfolio based on the sampled distribution. Although these three categories are focused on a single strategy (class), there is another category that combines multiple strategies (classes), known as \emph{meta-learning algorithms}. Table~\ref{tab:olps-algos} outlines the main algorithms and corresponding references.
+\begin{table}[H]
+\caption{Taxonomy of online portfolio selection techniques. Source: \citep{olps-survey}.}
+\label{tab:olps-algos}
+\centering
+\resizebox{\textwidth}{!}{
+\begin{tabular}{ |l|l|l|l| } 
+\hline
+Category & Algorithms & Representative References \\
+\hline
+\multirow{3}{10em}{Benchmarks} & Buy and Hold & \\ 
+& Best Stock &  \\ 
+& Constant Rebalanced Portfolios & \citep{kelly, cover} \\ 
+\hline
+\multirow{5}{10em}{Follow the winner} & Universal Portfolios & \citep{cover, cover96} \\ 
+& Exponential Gradient & \citep{eg} \\ 
+& Follow the Leader & \citep{gaivoronski00} \\
+& Follow the Regularized Leader & \citep{ons} \\
+& Aggregating-Type Algorithms & \citep{vovk98} \\ 
+\hline
+\multirow{5}{10em}{Follow the loser} & Anti-Correlation & \citep{borodin04} \\ 
+& Passive-Aggressive Mean Reversion & \citep{pamr} \\ 
+& Confidence-Weighted Mean Reversion & \citep{cwmr} \\
+& Online Moving Average Reversion & \citep{olmar} \\
+& Robust Median Reversion & \citep{rmr} \\ 
+\hline
+\multirow{9}{10em}{Pattern matching} & Nonparametric Histogram Log-Optimal Strategy & \citep{bnn} \\ 
+& Nonparametric Kernel-Based Log-Optimal Strategy & \\ 
+& Nonparametric Nearest Neighbor Log-Optimal Strategy & \citep{bnn2} \\
+& Correlation-Driven Nonparametric Learning Strategy & \citep{corn} \\
+& Nonparametric Kernel-Based Semi-Log-Optimal Strategy & \citep{gyorfi07} \\
+& Nonparametric Kernel-Based Markowitz-Type Strategy & \citep{ottucsak07} \\ 
+& Nonparametric Kernel-Based GV-Type Strategy & \citep{gyorfi08} \\ 
+\hline
+\multirow{5}{10em}{Meta learning} & Aggregating Algorithm & \citep{vovk90, vovk98} \\ 
+& Fast Universalization Algorithm & \citep{akcoglu02, akcoglu04} \\ 
+& Online Gradient Updates & \\
+& Online Newton Updates & \citep{das11} \\
+& Follow the Leading History & \citep{hazan09} \\
+\hline
+\end{tabular}
+}
+\end{table}
+
+This chapter provides a fairly detailed description of the algorithms mentioned in Table~\ref{tab:olps-algos}. The remainder of the chapter is structured as follows. Section~\ref{sec:problem-setting} formally posits the problem of online portfolio selection and discusses several practical issues. Section~\ref{sec:olps-approaches} introduces the state-of-the-art algorithms, including benchmarks in Section~\ref{sec:benchmarks}, follow-the-winner approaches in Section~\ref{sec:follow-the-winner}, follow-the-loser strategies in Section~\ref{sec:follow-the-loser}, pattern-matching approaches in Section~\ref{sec:pattern-matching}, and meta-learning algorithms in Section~\ref{sec:mlas}. Finally, Section~\ref{sec:conclusion} concludes this chapter.
+
+
+
+
+\section{Problem Setting}
+\label{sec:problem-setting}
+
+We now formally describe the online portfolio selection (OLPS) problem. Consider an investment task over a financial market with $m$ assets and a $T$-period horizon. On the $t$-th period, the asset prices are represented by a \emph{closing-price vector} $\mathbf{p}_t \in \mathbb{R}^m_+$. The price changes are represented by a \emph{price-relative vector} $\mathbf{x}_t \in \mathbb{R}_+^m$ such that $x_{t,i} \equiv \frac{p_{t,i}}{p_{t-1,i}}$ for each asset $i \in [m]$. Thus, an investment in asset $i$ on the $t$-th period increases by a factor of $x_{t,i}$. Let us denote by $\mathbf{x}_{t_1:t_2} \equiv \{\mathbf{x}_{t_1}, \mathbf{x}_{t_1+1}, \ldots, \mathbf{x}_{t_2}\}$ a sequence of price-relative vectors ranging from period $t_1$ to $t_2$. Therefore, $\mathbf{x}_{1:T} = \{\mathbf{x}_{1}, \mathbf{x}_{2}, \ldots, \mathbf{x}_{T}\}$ represents the sequence of price-relative vectors over the entire $T$-period horizon.
+
+An investment on the $t$-th period is specified by a \emph{portfolio vector} $\mathbf{b}_t = (b_{t,1}, \ldots, b_{t,m})$, where $b_{t,i}$ represents the proportion of wealth invested in asset $i$. Typically, we assume the portfolio is self-financed and that no margin/short sale is allowed, so that each entry of a portfolio is non-negative and all entries add up to one:
+\begin{equation}
+	\mathbf{b}_t \in \Delta_m
+	\equiv \Big\{\mathbf{b}_t : \mathbf{b}_t \in \mathbb{R}^m_+,\, \sum_{i =1}^m b_{t,i} = 1\Big\}.
+\end{equation}
+The investment procedure is represented by a \emph{portfolio strategy} such that $\mathbf{b}$ is initialised at the equally-weighted portfolio by convention, that is $\mathbf{b}_1 = \mathbf{1}/m$, followed by a sequence of mappings $\mathbf{b}_t : \mathbb{R}^{m(t-1)}_{+} \rightarrow \Delta_m$ for $t = 2, 3, \ldots$, where $\mathbf{b}_t = \mathbf{b}_t(\mathbf{x}_{1:t-1})$ is the $t$-th portfolio given the historical market sequence $\mathbf{x}_{1:t-1} = \{\mathbf{x}_1, \ldots, \mathbf{x}_{t-1}\}$. We denote by $\mathbf{b}_{1:T} = \{\mathbf{b}_1, \ldots, \mathbf{b}_T\}$ the strategy for $T$ periods.
+
+On the $t$-th period, a portfolio $\mathbf{b}_t$ produces a \emph{portfolio period return} $s_t$, that is, the wealth increases by a factor of $s_t \equiv \mathbf{b}_t^\text{T}\mathbf{x}_t = \sum_{i=1}^m b_{t,i}x_{t,i}$. We shall assume all profits are reinvested, which implies that wealth grows in a multiplicative fashion. Thus, after $T$ periods, a portfolio strategy $\mathbf{b}_{1:T}$ produces a \emph{portfolio cumulative wealth} of $S_T$, which amounts to the initial wealth times a factor of $\prod_{t=1}^T s_t$, that is
+\begin{equation}
+\label{eq:portfolio-cumulative-wealth}
+	S_T(\mathbf{b}_{1:T})
+	= S_0\prod_{t=1}^T s_t
+	= S_0\prod_{t=1}^T \mathbf{b}_t^\text{T}\mathbf{x}_t,
+\end{equation}
+where $S_0$ denotes the initial wealth and can be set to \$1 without any loss of generality. Since the model assumes multiperiod reinvestment, we define the \emph{exponential growth rate} for a strategy $\mathbf{b}_{1:T}$ as
+\begin{equation}
+	W_{T}(\mathbf{b}_{1:T})
+	= \frac{1}{T}\log S_T(\mathbf{b}_{1:T})
+	= \frac{1}{T}\sum_{t=1}^T \log \mathbf{b}_t^\text{T}\mathbf{x}_t.
+\end{equation}
+
+Finally, we formally formulate the OLPS procedure, and outline its algorithmic framework in Algorithm~\ref{alg:olps0}. In this task, a portfolio manager is a decision maker whose goal is to produce a portfolio strategy $\mathbf{b}_{1:T}$ so as to maximise her cumulative wealth $S_T$. She computes the portfolios sequentially. On each period $t$, the manager has access to the sequence of all previous price-relative vectors $\mathbf{x}_{1:t-1}$. Then, she computes a new portfolio $\mathbf{b}_t$ before observing the next price-relative vector $\mathbf{x}_t$, based on a decision criterion that varies among different managers. The portfolio $\mathbf{b}_t$ is scored based on the portfolio period return $s_t$. This procedure is repeated until the end of the $T$-period investment horizon, and the portfolio strategy is finally scored according to its cumulative wealth $S_T$.
+
+It is important to note that we have made several general and common assumptions in the above description that are non-trivial in practice:
+\begin{enumerate}
+  \item Transaction costs: there are no commission fees or taxes;
+  \item Market liquidity: one can buy and sell any desired amount, even fractional, at the last closing price of any given trading period;
+  \item Market impact: no portfolio strategy shall influence the market, or the prices of other assets.
+\end{enumerate}
+
+\begin{algorithm}
+  \caption{Online Portfolio Selection Framework}
+\label{alg:olps0}
+  \begin{algorithmic}[1]
+    \STATE {\bfseries Initialisation:} $\mathbf{b}_1 = \left(\frac{\mathbf{1}}{m}, \ldots, \frac{\mathbf{1}}{m}\right)$, $S_0 = 1$
+    \FOR{$t=1, 2, \ldots, T$}
+%      \STATE the portfolio manager learns the portfolio $\mathbf{b}_t \in \Delta_m$
+      \STATE the market reveals the price-relative vector $\mathbf{x}_t$
+      \STATE the portfolio manager realises a profit (or loss) of $s_t = \mathbf{b}_t^\text{T}\mathbf{x}_t$, and her wealth changes to $S_t = S_{t-1} \times (\mathbf{b}_t^\text{T}\mathbf{x}_t)$
+	\IF{$t<T$}      
+      \STATE the portfolio manager updates her portfolio from $\mathbf{b}_t$ to $\mathbf{b}_{t+1} \in \Delta_m$
+    \ENDIF
+    \ENDFOR
+%    \STATE {\bfseries Output:} terminal wealth $S_T$
+  \end{algorithmic}
+\end{algorithm}
+
+To better understand these notions and the model presented, let us illustrate with a classical example.
+\begin{example}[Synthetic market by \citep{cover-gluss86}]
+\label{ex:first-example}
+Assume a two-asset market with cash and one volatile asset whose sequence of price relatives is given by $\mathbf{x}_{1:T} = \{(1, 2), (1, \frac{1}{2}), (1, 2), \ldots\}$. The first price relative vector $\mathbf{x}_1 = (1, 2)$ means that if one invests \$1 in the first asset, one gets \$1 at the end of the period; if one invests \$1 in the second asset, one collects \$2.
+
+Consider the equally-weighted portfolio $\mathbf{b}_{1:T} = \{(\frac{1}{2}, \frac{1}{2}), (\frac{1}{2}, \frac{1}{2}), \ldots\}$, in which the manager redistributes the capital equally among the two assets at each trading period. In the first period, the portfolio wealth increases by a factor of $1 \times \frac{1}{2} + 2 \times \frac{1}{2} = \frac{3}{2}$. Starting with an initial capital of $S_0 = 1$, the capital at the end of the first period would be $S_1 = S_0 \times \frac{3}{2} = \frac{3}{2}$. Similarly, $S_2 = S_1 \times (1 \times \frac{1}{2} + \frac{1}{2} \times \frac{1}{2}) = \frac{3}{2} \times \frac{3}{4} = \frac{9}{8}$. Thus, at the end of period $T$, the final cumulative wealth is equal to
+\begin{equation}
+	S_T(\mathbf{b}_{1:T}) = 
+	\begin{cases}
+		\left(\frac{9}{8}\right)^\frac{T}{2} & (T \text{ even}) \\
+		\frac{3}{2} \times \left(\frac{9}{8}\right)^\frac{T-1}{2} & (T \text{ odd})
+	\end{cases}
+\end{equation}
+and the exponential growth rate is
+\begin{equation}
+	W_T(\mathbf{b}_{1:T}) = 
+	\begin{cases}
+		\frac{1}{2}\log\frac{9}{8} & (T \text{ even}) \\
+		\frac{T-1}{2T}\log\frac{9}{8} + \frac{1}{T}\log\frac{3}{2} & (T \text{ odd})
+	\end{cases},
+\end{equation}
+which approaches $\frac{1}{2}\log\frac{9}{8} > 0$ if $T$ is sufficiently large.
+\end{example}
+
+\subsection{Transaction costs}
+
+In reality, the most important and unavoidable issue is that of transaction costs. In this section, we describe how to incorporate them into the OLPS framework for the purpose of evaluating competing OLPS algorithms only. We shall not cover strategies that directly solve the transaction cost issue. For this type of strategy, we refer the interested reader to \citep{davis90, iyengar00, akian01, schafer02, gyorfi08, ormos11}.
+
+The widely adopted transaction-cost model is that of \emph{proportional transaction costs} \citep{blum99, gyorfi08}, which assumes that the incurred transaction cost is proportional to the wealth transferred during rebalancing. At the beginning of the $t$th period, the portfolio manager intends to rebalance the portfolio from the close-price adjusted portfolio $\widehat{\mathbf{b}}_{t-1}$ to a new portfolio $\mathbf{b}_t$. Here, each element of $\widehat{\mathbf{b}}_{t-1}$ is calculated as $\widehat{b}_{t-1,i} = \frac{b_{t-1,i}x_{t-1,i}}{\mathbf{b}_{t-1}^\text{T}\mathbf{x}_{t-1}}$, for $i=1,\ldots,m$. Assume two transaction cost rates $\gamma_b \in (0, 1)$ and $\gamma_s \in (0, 1)$ for buying and selling, respectively. After rebalancing, $S_{t-1}$ will be decomposed into two parts, namely the net wealth $N_{t-1}$ in the new portfolio $\mathbf{b}_t$ and the transaction costs incurred during buying and selling. If the wealth on asset $i$ before rebalancing is higher than that after rebalancing, i.e.\ $\widehat{b}_{t-1,i} S_{t-1} \geq b_{t,i}N_{t-1}$, then a sale occurs at rebalancing. Otherwise, a buy is required. This leads to the decomposition
+\begin{equation}
+	S_{t-1}
+	= N_{t-1} + \gamma_s \sum_{i=1}^m \max(0, \, \widehat{b}_{t-1,i} S_{t-1} - b_{t,i}N_{t-1}) + \gamma_b \sum_{i=1}^m \max(0, \, b_{t,i}N_{t-1} - \widehat{b}_{t-1,i} S_{t-1}).
+\end{equation}
+Dividing this by $S_{t-1}$, we obtain
+\begin{equation}
+	1
+	= c_{t-1} + \gamma_s \sum_{i=1}^m \max(0, \, \widehat{b}_{t-1,i} - b_{t,i}c_{t-1}) + \gamma_b \sum_{i=1}^m \max(0, \, b_{t,i}c_{t-1} - \widehat{b}_{t-1,i}),
+\end{equation}
+where $c_{t-1} = \frac{N_{t-1}}{S_{t-1}} \in (0, 1)$ is the \emph{transaction-cost factor} \citep{gyorfi08}.
+
+Finally, at each period $t$, the manager's wealth grows according to
+\begin{equation}
+	S_t = S_{t-1} \times c_{t-1} \times (\mathbf{b}_t^\text{T}\mathbf{x}_t),
+\end{equation}
+and the final cumulative wealth after $T$ periods equals
+\begin{equation}
+	S_T = S_0 \prod_{t=1}^T [c_{t-1} \times (\mathbf{b}_t^\text{T}\mathbf{x}_t)].
+\end{equation}
+
+
+
+
+\section{Online Portfolio Selection Approaches}
+\label{sec:olps-approaches}
+
+In this section, we provide a brief description of the techniques listed in Table~\ref{tab:olps-algos}. These techniques formulate the online portfolio selection problem as in Section~\ref{sec:problem-setting} and derive explicit portfolio update schemes for each period. Basically, the routine is to implicitly assume various price relative predictions and learn optimal portfolios.
+
+We begin by introducing several benchmark algorithms in Section~\ref{sec:benchmarks}. We then cover algorithms with explicit update schemes, which we classify based on the direction of the weight transfer they employ. The first approach, follow the winner, tries to increase the relative weights of more successful assets, often based on historical performance. In contrast, the follow-the-loser approach seeks to increase the relative weights of assets with lacklustre performance, transferring wealth from winners to losers. The third approach, pattern matching, tries to build a portfolio based on some sampled similar historical patterns without any explicit weight-transfer direction. After that, we survey meta-learning algorithms (MLAs), which can be applied to higher-level experts equipped with any existing algorithm.
+
+\subsection{Benchmarks}
+\label{sec:benchmarks}
+
+\subsubsection{Buy-and-hold strategy}
+
+The most common baseline is the buy-and-hold (BAH) strategy, in which one invests wealth among a pool of assets with an initial portfolio $\mathbf{b}_1$  and holds the portfolio through the end of the investment horizon. The manager buys the assets of interest at the beginning of the first period and never rebalances the portfolio, meaning the value of any holding can only vary due to market fluctuations. For example, at the end of the 1st period, the portfolio weights become $\frac{\mathbf{b}_1 \odot \mathbf{x}_1}{\mathbf{b}_1^\text{T}\mathbf{x}_1}$, where $\odot$ denotes element-wise multiplication. In summary, the final wealth achieved by a BAH strategy can be expressed as
+\begin{equation}
+	S_{T}(\mathrm{BAH}(\mathbf{b}_1)) = \mathbf{b}_1^\text{T} \left(\odot_{t=1}^T \mathbf{x}_t\right).
+\end{equation}
+The BAH strategy initialised at the equally-weighted portfolio $\mathbf{b}_1 = (\frac{1}{m}, \ldots, \frac{1}{m})$ is referred to as the uniform BAH strategy and is often adopted to produce a market index.
+
+\subsubsection{Best-stock strategy}
+
+Another widely adopted benchmark is the best-stock (Best) strategy, a particular case of the BAH strategy that assigns all capital to the stock with the best performance in hindsight. Its initial portfolio $\mathbf{b}^\circ$ can be calculated in hindsight as follows:
+\begin{equation}
+	\mathbf{b}^\circ = \argmax_{\mathbf{b} \in \Delta_m} \; \mathbf{b}^\text{T} \left(\odot_{t=1}^T \mathbf{x}_t\right).
+\end{equation}
+As a result, the final wealth achieved by this strategy is given by
+\begin{equation}
+	S_{T}(\mathrm{Best}) = \max_{\mathbf{b} \in \Delta_m} \; \mathbf{b}^\text{T} \left(\odot_{t=1}^T \mathbf{x}_t\right)
+	= S_{T}(\mathrm{BAH}(\mathbf{b}^\circ)).
+\end{equation}
+
+\subsubsection{Constant rebalanced portfolios}
+
+Another more sophisticated benchmark strategy is the constant rebalanced portfolio (CRP) strategy, which rebalances the portfolio to a fixed portfolio $\mathbf{b}$ every period. In particular, the portfolio strategy can be represented as $\mathbf{b}_{1:T} = \{\mathbf{b}, \mathbf{b}, \ldots\}$. Thus, the cumulative portfolio wealth achieved by a CRP strategy after $T$ periods is defined as
+\begin{equation}
+	S_{T}(\mathrm{CRP}(\mathbf{b})) = \prod_{t=1}^T \mathbf{b}^\text{T}\mathbf{x}_t.
+\end{equation}
+One special CRP strategy that rebalances to the uniform portfolio $\mathbf{b}_1 = (\frac{1}{m}, \ldots, \frac{1}{m})$ each period is the uniform constant rebalanced portfolio (UCRP). It is possible to calculate an optimal offline portfolio for the CRP strategy as
+\begin{equation}
+	\mathbf{b}^* = \argmax_{\mathbf{b} \in \Delta_m} \; \log S_{T}(\mathrm{CRP}(\mathbf{b}))
+	= \argmax_{\mathbf{b} \in \Delta_m} \; \sum_{t=1}^T \log(\mathbf{b}^\text{T}\mathbf{x}_t),
+\end{equation}
+which is convex and can be efficiently solved. The CRP strategy with $\mathbf{b}^*$ is termed best constant rebalanced portfolio (BCRP). The terminal wealth and exponential growth rate achieved by the BCRP strategy are respectively:
+\begin{align}
+	& S_{T}(\mathrm{BCRP}) = \max_{\mathbf{b} \in \Delta_m} \; S_{T}(\mathrm{CRP}(\mathbf{b})) = S_{T}(\mathrm{CRP}(\mathbf{b}^*)),
+	\nonumber \\
+	& W_{T}(\mathrm{BCRP}) = \max_{\mathbf{b} \in \Delta_m} \; \frac{1}{T}\log S_{T}(\mathrm{CRP}(\mathbf{b})) = \frac{1}{T}\log S_{T}(\mathrm{CRP}(\mathbf{b}^*)).
+\end{align}
+Note that BCRP is a hindsight strategy, and therefore can only be calculated with complete market sequences. \cite{cover} proved the benefits of BCRP as a target: BCRP outperforms the best stock, value line index (geometric mean of component returns) and the arithmetic mean of component returns (in other words, BAH). Moreover, BCRP is invariant under permutations of the price relative sequences, meaning it does not depend on the order of arrival of $\mathbf{x}_1, \mathbf{x}_2, \ldots, \mathbf{x}_T$.
+
+Let us now compare BAH against CRP by means of the following example.
+\begin{example}[Synthetic Market by \citep{cover-gluss86}]
+\label{ex:second-example}
+Assume a two-asset market with cash and one volatile asset with the price relative sequence $\mathbf{x}_{1:T} = \{(1, 2), (1, \frac{1}{2}), (1, 2), \ldots\}$. Consider the uniform BAH portfolio $\mathbf{b}_1 = (\frac{1}{2}, \frac{1}{2})$ and the CRP strategy with a uniform portfolio $\mathbf{b} = (\frac{1}{2}, \frac{1}{2})$ as well. Clearly, since no asset grows in the long run, the final wealth of BAH equals the uniform weighted sum of two assets, which roughly equals 1 in the long run. On the other hand, according to the analysis in Example~\ref{ex:first-example}, the final cumulative wealth of CRP is roughly $(\frac{9}{8})^\frac{T}{2}$, which increases exponentially. Note that BAH only rebalances on the 1st period, whereas the CRP rebalances every period. While this synthetic market does not experience any growth, CRP can produce an exponentially increasing return. The underlying idea of CRP is to take advantage of the underlying volatility, or so-called volatility pumping \citep[Chapter~15]{luenberger98}.
+
+Since CRP enforces a fixed portfolio each period, its frequent transactions will incur high transaction costs. \citet{eg} proposed a semi-constant rebalanced portfolio (Semi-CRP), which rebalances the portfolio on selected periods rather than every period. One desired theoretical result for online portfolio selection is universality \citep{cover}. An online portfolio selection algorithm $\mathrm{Alg}$ is universal if its average (external) regret \citep{stoltz05, blum07} for $T$ periods asymptotically approaches 0:
+\begin{equation}
+	\frac{1}{T}\mathrm{regret}_{T}(\mathrm{Alg}) = W_{T}(\mathrm{BCRP}) - W_{T}(\mathrm{Alg}) \rightarrow 0 \quad \text{as } T \rightarrow \infty.
+\end{equation}
+In other words, a universal portfolio selection algorithm asymptotically approaches the same exponential growth rate as a BCRP strategy for arbitrary sequences of price relatives.
+\end{example}
+
+\subsection{Follow-the-winner approaches}
+\label{sec:follow-the-winner}
+
+Follow the winner is characterised by increasing the relative weights of more successful assets. Rather than targeting the market or best stock, algorithms in this category often aim to track the BCRP strategy, which can be shown to be the optimal strategy in an i.i.d. market \citep[Theorem~15.3.1]{cover-book}.
+
+\subsubsection{Universal portfolios}
+
+The basic idea underlying universal-portfolio algorithms consists in assigning capital to a single class of base experts, letting them trade, and finally pooling their wealth. Strategies in this category are analogous to the BAH strategy. The difference is that the base BAH expert is the strategy investing in a single stock, and thus the number of experts is the same as that of stocks. In other words, the BAH strategy buys individual stocks, lets them run and finally pools their individual wealth. On the other hand, the base expert in the follow-the-winner category can be any strategy class that invests in any set of stocks. Besides, algorithms in this category are similar to the MLAs further described in subsection~\ref{sec:mlas}, although these generally apply to experts of multiple classes.
+
+\citet{cover} proposed the universal portfolio (UP) strategy, and \citet{cover96} further refined it to the $\mu$-weighted UP, in which $\mu$ denotes a given measure over the space of admissible portfolios $\Delta_m$. Intuitively, Cover's UP operates similar to a fund of funds (FOF), and its main idea is to BAH the parameterised CRP strategies over the whole simplex domain. In particular, it initially allocates a proportion of wealth $\mathrm{d}\mu(\mathbf{b})$ to each portfolio manager operating a CRP strategy with $\mathbf{b} \in \Delta_m$, and lets the CRP managers trade. Then, at the end, each manager will grow her wealth to $S_{T}(\mathbf{b})\mathrm{d}\mu(\mathbf{b})$. Finally, Cover's UP pools the individual experts' wealth over the continuum of portfolio strategies. Note that $S_{T}(\mathbf{b}) = \exp\{T W_{T}(\mathbf{b})\}$, which means that the portfolio grows at an exponential rate of $W_{T}(\mathbf{b})$.
+
+Formally, its update scheme \citep[Definition~1]{cover96} can be interpreted as a weighted average of the historical performance across all admissible CRPs, i.e.\
+\begin{equation}
+	\mathbf{b}_{t+1}
+	= \frac{\int_{\Delta_m} \mathbf{b} S_{t}(\mathbf{b})\mathrm{d}\mu(\mathbf{b})}{\int_{\Delta_m} S_{t}(\mathbf{b})\mathrm{d}\mu(\mathbf{b})}.
+\end{equation}
+Note that at the beginning of period $t+1$, one CRP manager's wealth (historical performance) is equal to $S_{t}(\mathbf{b})\mathrm{d}\mu(\mathbf{b})$. Incorporating the initial wealth of $S_0 = 1$, the final cumulative wealth is the weighted average of all CRP managers' wealth \citep[Eq.~(24)]{cover96}:
+\begin{equation}
+	S_{T}(\mathrm{UP}) = \int_{\Delta_m} S_{T}(\mathbf{b})\mathrm{d}\mu(\mathbf{b}).
+\end{equation}
+One special case arises when $\mu$ is a Lebesgue (uniform) measure. In this case, the portfolio update reduces to Cover's UP \citep[Eq.~(1.3)]{cover}. Another special case is the Dirichlet-weighted UP \citep{cover96}, which is proved to be a more optimal allocation. Alternatively, if the loss function is the negative logarithm of the portfolio return, Cover's UP is actually an exponentially weighted average forecaster \citep{lugosi}.
+
+\citet{cover} showed that under suitable smoothness conditions, the average of exponentials grows at the same exponential rate as the maximum, in which case it becomes possible to asymptotically approach BCRP's exponential growth rate. The regret achieved by Cover's UP is $O(m\log T)$, while its time complexity is $O(T^m)$. \citet{cover96} proved that the Dirichlet UP has the same scale of regret bound but a better constant term \citep[Theorem~2]{cover96}.
+%
+%\begin{flushleft}
+%As Cover's UP is based on an ideal market model, one research topic with respect
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%to Cover's UP is to extend the algorithm with various realistic assumptions. Cover
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%and Ordentlich [1996] extended the model to include side information, which can be
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%instantiated experts' opinions, fundamental data, and so forth. Blum and Kalai [1999]
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%took account of transaction costs for online portfolio selection and proposed a universal
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%portfolio algorithm to handle the costs.
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%Another research topic is to generalize Cover's UP with different underlying base
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%expert classes, rather than the CRP strategy. Jamshidian [1992] generalized the
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%algorithm for continuous time market and derived the long-term performance of Cover's
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%UP in this setting. Vovk and Watkins [1998] applied Aggregating Algorithm (AA) [Vovk
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%1990] to a finite number of arbitrary investment strategies. Cover's UP becomes a specialized case of AA when applied to an infinite number of CRPs. We will further investigate AA in Section 3.2.5. Ordentlich and Cover [1998] derived the lower bound of
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%the final wealth achieved by any nonanticipating investment strategy to that of BCRP
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%strategy. Cross and Barron [2003] generalized Cover's UP from CRP strategy class to
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%any parameterized target class and proposed a universal strategy that costs a polynomial time. Akcoglu et al. [2002, 2004] extended Cover's UP from the parameterized CRP
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%class to a wide class of investment strategies, including trading strategies operating on
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%a single stock and portfolio strategies operating on the whole stock market. Kozat and
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%Singer [2011] proposed a similar universal algorithm based on the class of Semi-CRPs
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%[Helmbold et al. 1996, 1998], which provides good performance with transaction costs.
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%Rather than the previous analysis, various work has also been proposed to discuss
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%the connection between Cover's UP with universal prediction [Feder et al. 1992],
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%data compression [Rissanen 1983] and Markowitz's mean-variance theory [Markowitz
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%1952, 1959]. Algoet [1992] discussed the universal schemes for prediction, gambling,
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%and portfolio selection. Cover [1996] and Ordentlich [1996] discussed the connection
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%ACM Computing Surveys, Vol. 46, No. 3, Article 35, Publication date: January 2014.
+%\end{flushleft}
+%
+%
+%
+%
+%
+%\begin{flushleft}
+%\newpage
+%Online Portfolio Selection: A Survey
+%\end{flushleft}
+%
+%
+%
+%
+%
+%35:11
+%
+%
+%
+%
+%
+%\begin{flushleft}
+%of universal portfolio selection and data compression. Belentepe [2005] presented a
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%statistical view of Cover's UP strategy and connected it with traditional Markowitz's
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%mean-variance portfolio theory [Markowitz 1952]. The authors showed that by
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%allowing short selling and leverage, UP is approximately equivalent to sequential
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%mean-variance optimization; otherwise, the strategy is approximately equivalent to
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%constrained sequential optimization. Although its update scheme is distributional
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%free, UP implicitly estimates the multivariate mean and covariance matrix.
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%Cover's UP has a good theoretical performance guarantee; however, its implementation costs exponential time in the number of assets, which restricts its practical capability. To overcome this computational bottleneck, Kalai and Vempala [2002] presented an
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%efficient implementation based on nonuniform random walks that are rapidly mixing.
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%Their implementation requires a poly running time of O(m7 n8 ), which is a substantial
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%improvement of the original bound of O(nm).
+%\end{flushleft}
+
+
+\subsubsection{Exponential gradient}
+
+Strategies of the exponential-gradient type generally focus on the following optimisation problem:
+\begin{equation}
+\label{eq:eg-optprob}
+	\mathbf{b}_{t+1}
+	= \argmax_{\mathbf{b}\in\Delta_m} \; \Big\{\eta \log(\mathbf{b}^\text{T}\mathbf{x}_t) - R(\mathbf{b}, \mathbf{b}_t)\Big\}.
+\end{equation}
+where $R(\mathbf{b}, \mathbf{b}_t)$ denotes a regularisation term and $\eta > 0$ is the learning rate. One straightforward interpretation of this problem is that it tracks the asset with the best performance in the last period, while keeping the new portfolio close to the old one. 
+
+\citet{eg} proposed the exponential gradient (EG) strategy, which is based on the algorithm proposed for the mixture estimation problem \citep{helmbold97}. The EG strategy employs the relative entropy as the regularisation term in Eq. \eqref{eq:eg-optprob}, i.e.\
+\begin{equation}
+	R(\mathbf{b}, \mathbf{b}_t)
+	= \sum_{i=1}^m b_i \log\frac{b_i}{b_{t,i}}.
+\end{equation}
+EG's formulation is thus convex in $\mathbf{b}$. Nonetheless, it is hard to solve due to the non-linearity of the log function. To circumvent this issue, the authors approximated the log with its first-order Taylor expansion at $\mathbf{b}_t$:
+\begin{equation}
+	\log(\mathbf{b}^\text{T}\mathbf{x}_t)
+	\approx \log(\mathbf{b}_{t}^\text{T}\mathbf{x}_t) + \frac{\mathbf{x}_t}{\mathbf{b}_{t}^\text{T}\mathbf{x}_t}(\mathbf{b} - \mathbf{b}_{t}),
+\end{equation}
+thanks to which the first term in Eq. \eqref{eq:eg-optprob} becomes linear, thereby simplifying the solution of the resulting approximate problem. Solving this problem leads to the following update rule \citep[Eq.~(3.3)]{eg}:
+\begin{equation}
+	b_{t+1,i}
+	= Z^{-1}b_{t,i}\exp\Big\{\eta\frac{x_{t,i}}{\mathbf{b}_{t}^\text{T}\mathbf{x}_t}\Big\},
+	\qquad i = 1, \ldots, m,
+\end{equation}
+where $Z$ denotes the normalisation term ensuring the portfolio weights sum up to 1.
+
+%The optimisation problem in Eq. \eqref{eq:eg-optprob} can also be solved using the gradient projection (GP) and expectation maximisation (EM) methods \citep{helmbold97}. GP and EM rely on different regularisation terms. In particular, GP adopts L2-norm regularisation, whereas EM adopts $\chi^2$ regularisation. More precisely,
+%\begin{equation}
+%	R(\mathbf{b}, \mathbf{b}_t) =
+%	\begin{cases}
+%		\frac{1}{2}\sum_{i=1}^m (b_i - b_{t,i})^2) & \text{(GP)} \\
+%		\frac{1}{2}\sum_{i=1}^m \frac{(b_i - b_{t,i})^2)}{b_{t,i}} & \text{(GP)} \\
+%	\end{cases}.
+%\end{equation}
+%
+%
+%\begin{flushleft}
+%The final update rule of GP [Helmbold et al. 1997, Eq. (5)] is
+%\end{flushleft}
+%
+%
+%?
+%
+%
+%\begin{flushleft}
+%m
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%xt,i
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%1 ? xt,i
+%\end{flushleft}
+%
+%
+%$-$
+%
+%
+%,
+%
+%
+%\begin{flushleft}
+%bt+1,i = bt,i + $\eta$
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%bt · xt
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%m
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%bt · xt
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%i=1
+%\end{flushleft}
+%
+%
+%
+%
+%
+%\begin{flushleft}
+%ACM Computing Surveys, Vol. 46, No. 3, Article 35, Publication date: January 2014.
+%\end{flushleft}
+%
+%
+%
+%
+%
+%\newpage
+%35:12
+%
+%
+%
+%
+%
+%\begin{flushleft}
+%B. Li and S. C. H. Hoi
+%\end{flushleft}
+%
+%
+%
+%
+%
+%\begin{flushleft}
+%and the update rule of EM [Helmbold et al. 1997, Eq. (7)] is
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%bt+1,i = bt,i $\eta$
+%\end{flushleft}
+%
+%
+%
+%
+%
+%\begin{flushleft}
+%xt,i
+%\end{flushleft}
+%
+%
+%$-$1 +1 ,
+%
+%
+%\begin{flushleft}
+%bt · xt
+%\end{flushleft}
+%
+%
+%
+%
+%
+%\begin{flushleft}
+%which can also be viewed as the first-order approximation
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%?of EG's update formula.
+%\end{flushleft}
+
+The regret of the EG strategy can be bounded by $O(T \log m)$ with $O(m)$ running time per period. The regret is not as tight as that of Cover's UP; however, its linear running time substantially surpasses that of Cover's UP. Besides, \citet{eg} also proposed a variant which has a regret bound of $O(m^{0.5}(\log m)^{0.25} T^{0.75})$. One key parameter of EG is the learning rate $\eta > 0$. In order to achieve the aforementioned regret bound, $\eta$ has to be small. This introduces a delicate trade-off, however, because as $\eta \rightarrow 0$, its weights converge to the uniform portfolio, so EG reduces to UCRP.
+
+\citet{das11} built upon the EG principles to develop a MLA named online gradient updates (OGU), which we shall briefly cover in Section~\ref{sec:ogu}. OGU combines its underlying experts in such a way that the overall system can achieve a performance that is no worse than any convex combination of the experts. A variant of OGU, called online lazy updates (OLU), was proposed in \citep{das13} to handle the case of non-zero transaction costs.
+
+\subsubsection{Follow the leader}
+
+Follow-the-leader (FTL) algorithms seek to track the BCRP strategy up to time $t$, that is
+\begin{equation}
+	\mathbf{b}_{t+1}
+	= \mathbf{b}_{t}^* = \argmax_{\mathbf{b}\in\Delta_m} \; \sum_{\tau=1}^t \log(\mathbf{b}^\text{T}\mathbf{x}_\tau).
+\end{equation}
+Clearly, this category follows the BCRP leader, and the ultimate leader is the BCRP over all periods.
+
+\citet[Chapter~4.4]{ordentlich96} briefly mentioned a strategy to obtain portfolios by combining the BCRP up to time $t$ with the uniform portfolio:
+\begin{equation}
+	\mathbf{b}_{t+1}
+	= \frac{t}{t+1}\mathbf{b}_{t}^* + \frac{1}{t+1}\frac{\mathbf{1}}{m}.
+\end{equation}
+He also derived its worst-case bound, which is slightly worse than that of Cover's UP.
+
+\citet{gaivoronski00} proposed the concepts of successive constant rebalanced portfolios (SCRP) and weighted successive constant rebalanced portfolios (WSCRP) for stationary markets. At each period, SCRP directly adopts the BCRP portfolio up to that period, that is $\mathbf{b}_{t+1} = \mathbf{b}_{t}^*$. The authors further derived the optimal portfolio $\mathbf{b}_{t}^*$ via stochastic optimisation, resulting in the detailed updates of SCRP \citep[Algorithm~1]{gaivoronski00}. On the other hand, WSCRP outputs a convex combination of the SCRP portfolio and the last portfolio:
+\begin{equation}
+	\mathbf{b}_{t+1}
+	= (1-\gamma) \mathbf{b}_{t}^* + \gamma \mathbf{b}_{t},
+\end{equation}
+where $\gamma \in [0, 1]$ represents the trade-off parameter. The regret bounds achieved by SCRP \citep[Theorem~1]{gaivoronski00} and WSCRP \citep[Theorem~4]{gaivoronski00} are both $O(K^{2}\log T)$, where $K$ is a uniform upper bound on the gradient of $\log(\mathbf{b}^\text{T}\mathbf{x})$ with respect to $\mathbf{b}$. It is straightforward to see that given the same assumption of upper/lower bounds on price relatives as Cover's UP \citep[Theorem~6.1]{cover}, the regret bound is on the same scale of Cover's UP, although the constant term is slightly worse.
+
+Rather than assuming a stationary market, some follow-the-leader algorithms are built upon the assumption of non-stationarity. For instance, \citet{gaivoronski00} proposed variable rebalanced portfolios (VRP), which calculates the BCRP portfolio based on a sliding window. To be more specific, VRP updates its portfolio as follows:
+\begin{equation}
+	\mathbf{b}_{t+1}
+	= \argmax_{\mathbf{b}\in\Delta_m} \;  \sum_{\tau=t-W+1}^t \log(\mathbf{b}^\text{T}\mathbf{x}_\tau),
+\end{equation}
+where $W$ denotes a specified window size. Following their algorithms for CRP, they further proposed successive variable rebalanced portfolios (SVRP) and Weighted Successive Variable Rebalanced Portfolios (WSVRP). No theoretical results were provided for these two algorithms.
+%
+%\begin{flushleft}
+%Gaivoronski and Stella [2003] further generalized Gaivoronski and Stella [2000]
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%and proposed Adaptive Portfolio Selection (APS) for online portfolio selection task. By
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%changing the objective part, APS can handle three types of portfolio selection task---
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%that is, adaptive Markowitz portfolio, log-optimal CRP, and index tracking. To handle
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%the transaction cost issue, they proposed Threshold Portfolio Selection (TPS), which
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%only rebalances the portfolio if the expected return of new portfolio exceeds that of a
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%previous portfolio for more than a threshold.
+%\end{flushleft}
+
+
+\subsubsection{Follow the regularised leader}
+
+Another category of approaches follows a similar idea as FTL, but adds a regularisation term, and is therefore known as the follow-the-regularised-leader (FTRL) approach. In general, FTRL methods can be formulated as follows:
+\begin{equation}
+\label{eq:ftrl-optprob}
+	\mathbf{b}_{t+1}
+	= \argmax_{\mathbf{b}\in\Delta_m} \; \sum_{\tau=1}^t \log(\mathbf{b}^\text{T}\mathbf{x}_\tau) - \frac{\beta}{2}R(\mathbf{b}),
+\end{equation}
+where $\beta$ denotes the trade-off parameter and $R(\mathbf{b})$ is a regularisation term on $\mathbf{b}$. Note that here all historical information is captured in the first term, thus the regularisation term only affects the next portfolio, which distinguishes FTRL from EG. One typical regularisation is the L2-norm, i.e.\ $R(\mathbf{b}) = \Vert\mathbf{b}\Vert^2$.
+
+\citet{ons} proposed the online newton step (ONS) algorithm by solving the optimisation problem in Eq. \eqref{eq:ftrl-optprob} with L2-norm regularisation, using online convex optimisation techniques \citep{ogd, hazan06, hazan07}. Similar to the Newton method for offline optimisation, the basic idea is to replace the log term by its second-order Taylor expansion at $\mathbf{b}_t$, then solve the approximating problem to obtain a closed-form update scheme. Doing so, the ONS update rule is shown to be \citep[Lemma~2]{ons}
+\begin{equation}
+	\mathbf{b}_1 = \left(\frac{1}{m}, \ldots, \frac{1}{m}\right),
+	\quad \mathbf{b}_{t+1} = \Pi_{\Delta_m}^{\mathbf{A}_t}(\delta \mathbf{A}_t^{-1}\mathbf{p}_t),
+\end{equation}
+with
+\begin{equation}
+	\mathbf{A}_t = \sum_{\tau=1}^t \frac{\mathbf{x}_\tau \mathbf{x}_\tau^\text{T}}{(\mathbf{b}_\tau^\text{T}\mathbf{x}_\tau)^2} + \mathbf{I}_m,
+	\quad \mathbf{p}_t = \left(1 + \frac{1}{\beta}\right)\sum_{\tau=1}^t \frac{\mathbf{x}_\tau}{\mathbf{b}_\tau^\text{T}\mathbf{x}_\tau},
+\end{equation}
+where $\beta$ is the trade-off parameter, $\delta$ is a scale term, and $\Pi_{\Delta_m}^{\mathbf{A}_t}(\cdot)$ is an exact projection onto the simplex domain.
+
+ONS iteratively updates the first- and second-order information as well as the portfolio with a time cost of $O(m^3)$, which is independent of the number of historical instances $T$. The authors also proved that ONS's regret bound is of the order of $O(m^{1.5}\log(mT))$ \citep[Theorem~1]{ons}, which is worse than the corresponding bound of Cover's UP or the Dirichlet-weighted UP.
+
+%While FTRL or even the follow-the-winner category mainly focuses on worst-case investing, \citet{hazan12} linked the worst-case model with the widely used geometric Brownian motion (GBM), which is a probabilistic model of stock returns. The authors also designed an investment strategy that is universal in the worst case and capable of exploiting the GBM model. Their algorithm, or so-called Exp-Concave-FTL, follows a slightly different form of optimisation problem \eqref{eq:ftrl-optprob} with L2-norm regularisation:
+%\begin{equation}
+%	\mathbf{b}_{t+1}
+%	= \argmax_{\mathbf{b}\in\Delta_m} \; \sum_{\tau=1}^t \log(\mathbf{b}^\text{T}\mathbf{x}_\tau) - \frac{1}{2}\Vert\mathbf{b}\Vert^2.
+%\end{equation}
+%Similar to ONS, the optimisation problem can be efficiently solved via online convex optimisation techniques. The authors further analysed its regret bound and related it to the GBM model. Linking the GBM model, the regret round [Hazan and Kale 2012,
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%Theorem 1.1 and Corollary 1.2] is O (mlog ( Q + m)), where Q denotes the quadratic
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%variability, calculated as n $-$ 1 times the sample variance of the sequence of price
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%relative vectors. Since Q is typically much smaller than n, the regret bound significantly
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%improves the O (mlog n) bound.
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%Besides the improved regret bound, the authors also discussed the relationship of
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%their algorithm's performance to trading frequency. The authors asserted that increasing the trading frequency would decrease the variance of the minimum variance CRP---
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%that is, the more frequently they trade, the more likely the payoff will be close to the
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%expected value. On the other hand, the regret stays the same even if they trade more.
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%Consequently, it is expected to see improved performance of such algorithm as the
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%trading frequency increases [Agarwal et al. 2006].
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%Das and Banerjee [2011] further extended the FTRL approach to a generalized
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%MLA---that is, Online Newton Update (ONU), which guarantees that the overall performance is no worse than any convex combination of its underlying experts.
+%\end{flushleft}
+
+
+\subsubsection{Aggregating-type algorithms}
+\label{sec:aa-algos}
+
+Although BCRP is the optimal strategy for an i.i.d. market, the i.i.d. assumption is controversial in practice, so the optimal portfolio may not be a CRP or fixed-fraction portfolio. Some algorithms have been designed to track a different set of experts. These algorithms share a similar idea to the MLAs in Section~\ref{sec:mlas}. However, their base experts belong to a special class, namely the class of experts that invest all their wealth in a single stock\footnote{In general, MLAs often rely on more complex experts from multiple classes.}.
+
+\citet{vovk98} applied the aggregating algorithm (AA) \citep{vovk90} to the online portfolio selection task, of which Cover's UP is a special case. The general setting for AA is to define a countable or finite set of base experts and sequentially allocate resources among them in order to achieve a performance that is no worse than any fixed combination. Its portfolio-weight updates are carried out according to \citep[Algorithm~1]{vovk98}
+\begin{equation}
+	\mathbf{b}_{t+1} = \frac{\int_{\Delta_m} \mathbf{b}\prod_{i=1}^{t-1}(\mathbf{b}^\text{T}\mathbf{x}_t)^\eta P_{0}(\mathrm{d}\mathbf{b})}{\int_{\Delta_m}\prod_{i=1}^{t-1}(\mathbf{b}^\text{T}\mathbf{x}_t)^\eta P_{0}(\mathrm{d}\mathbf{b})}.
+\end{equation}
+where $P_{0}(\mathrm{d}\mathbf{b})$ denotes the prior weights of the experts. Cover's UP corresponds to AA with a uniform prior distribution and $\eta = 1$.
+
+\citet{singer97} proposed switching portfolios (SP) to track a changing market, in which assets' behaviour may change frequently. Unlike the CRP class, SP decides a set of basic strategies---for example, the pure strategy that invests all wealth in one asset---and chooses a prior distribution over that set. Based on the actual return of each strategy and the prior distribution, SP is able to select a portfolio for each period. In this spirit, the author proposed two algorithms, both of which assume that the duration of using a basic strategy follows a geometric distribution with parameter $\gamma$ , which can be fixed or variable. With fixed $\gamma$ , the first version of SP has an explicit update formula \citep[Eq.~(6)]{singer97}, namely
+\begin{equation}
+	\mathbf{b}_{t+1}
+	= \left(1 - \gamma - \frac{\gamma}{m-1}\right)\mathbf{b}_t + \frac{\gamma}{m-1}\mathbf{1}.
+\end{equation}
+With variable $\gamma$ , SP has no explicit update. The authors also adapted the algorithm for transaction costs. Theoretically, the authors further gave the lower bound of SP's logarithmic wealth with respect to any underlying switching regime in hindsight \citep[Theorem~2]{singer97}. Empirical evaluation on Cover's two-stock pairs shows that SP can outperform UP, EG and BCRP in most cases.
+%
+%\begin{flushleft}
+%Levina and Shafer [2008] proposed the Gaussian Random Walk (GRW) strategy,
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%which switches among the base experts according to Gaussian distribution. Kozat and
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%Singer [2007] extended SP to piecewise fixed fraction strategies, which partitions the
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%periods into different segments and transits among these segments. The authors proved
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%the piecewise universality of their algorithm, which can achieve the performance of the
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%optimal piecewise fixed fraction strategy. Kozat and Singer [2008] extended Kozat and
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%Singer [2007] to the case of transaction costs. Kozat and Singer [2009, 2010] further
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%generalized Kozat and Singer [2007] to sequential decision problem. Kozat et al. [2008]
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%proposed another piecewise universal portfolio selection strategy via context trees, and
+%\end{flushleft}
+%
+%
+%\begin{flushleft}
+%Kozat et al. [2011] generalized to sequential decision problem via tree weighting.
+%\end{flushleft}
+
+It is worthwhile noting that switching portfolios adopt the notion of regime switching \citep{hamilton94, hamilton08}, which is different from the assumption underlying UP selection methods and seems to be more plausible than an i.i.d. market. Regime switching is also applied to some state-of-the-art trading strategies \citep{hardy01}. However, the limitation of this approach is its distributional assumption, because nor Geometric neither Gaussian distributions seem to fit the market well (see, e.g., \citep{cont01}).
+
+
+
+
+\subsection{Follow-the-loser approaches}
+\label{sec:follow-the-loser}
+
+The underlying assumption for the optimality of the BCRP strategy is that the market is i.i.d., which usually fails to hold in real-world data and thus often results in inferior empirical performance, as documented in various previous works. Instead of tracking winners, the follow-the-loser approach is characterised by transferring wealth from winners to losers. The underlying assumption of this approach is \emph{mean reversion} \citep{bondt85, poterba88, lo90}, which means that the well(poor)-performing assets during the current period will perform poorly (well) in subsequent periods.
+
+To better understand the mean-reversion principle, let us further analyse the behaviour of CRP in Example~\ref{ex:second-example} \citep{pamr}.
+\begin{example}[Synthetic market by \citet{cover-gluss86}]
+As illustrated in Example~\ref{ex:second-example}, the uniform CRP grows exponentially in the synthetic market by \citet{cover-gluss86}. Here, we analyse the behaviour of its portfolio updates, which exhibit mean reversion, as illustrated in Table~\ref{tab:mr-example}.
+\begin{table}[H]
+\caption{Example illustrating the mean-reversion trading idea.}
+\label{tab:mr-example}
+\centering
+\resizebox{\textwidth}{!}{
+\begin{tabular}{ |c|c|c|c|c|c| } 
+\hline
+# Period & Price relative (A, B) & CRP & CRP return & Portfolio holdings & Notes \\
+\hline
+1 & (1, 2) & $\left(\frac{1}{2}, \frac{1}{2}\right)$ & $\frac{3}{2}$ & $\left(\frac{1}{3}, \frac{2}{3}\right)$ & $B \rightarrow A$ \\
+2 & $(1, \frac{1}{2})$ & $\left(\frac{1}{2}, \frac{1}{2}\right)$ & $\frac{3}{4}$ & $\left(\frac{2}{3}, \frac{1}{3}\right)$ & $A \rightarrow B$ \\
+3 & (1, 2) & $\left(\frac{1}{2}, \frac{1}{2}\right)$ & $\frac{3}{2}$ & $\left(\frac{1}{3}, \frac{2}{3}\right)$ & $B \rightarrow A$ \\
+\vdots & \vdots & \vdots & \vdots & \vdots & \vdots \\
+\hline
+\end{tabular}
+}
+\end{table}
+Suppose that the initial CRP portfolio is $(\frac{1}{2}, \frac{1}{2})$ and that at the end of the 1st period, the closing-price adjusted portfolio holding becomes $(\frac{1}{3}, \frac{2}{3})$, so the corresponding cumulative wealth increases by a factor of $\frac{3}{2}$. At the beginning of the 2nd period, the CRP manager rebalances the portfolio to the initial uniform portfolio by transferring wealth from the well-performing stock (B) to the poor-performing one (A), which actually follows the mean-reversion principle. Then, cumulative wealth changes by a factor of $\frac{3}{4}$ and the portfolio holding at the end of the 2nd period becomes $(\frac{2}{3}, \frac{1}{3})$. At the beginning of the 3rd period, wealth transfer under the mean-reversion idea continues.
+
+In summary, CRP implicitly assumes that if one stock performs poorly (well), it tends to perform well (poorly) in subsequent periods, and thus increases the weights of poorly-performing stocks at the expense of well-performing ones.
+
+\end{example}
+
+
+\subsubsection{Anti-correlation}
+
+\citet{borodin04} proposed a follow-the-loser portfolio strategy named anti-correlation (Anticor). Unlike Cover's UP, Anticor assumes that the market obeys the mean-reversion principle. To exploit this property, Anticor statistically makes a bet on the consistency of positive lagged cross-correlation and negative autocorrelation.
+
+To obtain a portfolio for period $t+1$, the Anticor algorithm adopts logarithmic price relatives \citep{hull08} over two specific market windows, namely $\mathbf{y}_1 = \log(\mathbf{x}_{t-2w+1}^{t-w})$ and $\mathbf{y}_2 = \log(\mathbf{x}_{t-w+1}^{t})$. It then calculates the cross-correlation matrix between $\mathbf{y}_1$ and $\mathbf{y}_2$:
+\begin{align}
+	M_{\mathrm{cov}}(i, j) &= \frac{1}{w-1}(y_{1,i}-\bar{y}_1)(y_{2,j}-\bar{y}_2),
+	\\
+	M_{\mathrm{corr}}(i, j) &=
+	\begin{cases}
+		\frac{M_{\mathrm{cov}}(i, j)}{\sigma_{1}(i) \times \sigma_{2}(j)} & \text{if } \sigma_{1}(i), \sigma_{2}(j) \neq 0 \\
+		0 & \text{otherwise}.
+	\end{cases}
+\end{align}
+Then, relying on the cross-correlation matrix, Anticor transfers wealth according to the mean-reversion trading idea, or moves the proportions from the stocks that increased more in value to those that increased less, and the corresponding amounts are adjusted based on the cross-correlation matrix. In particular, if asset $i$ rises more than asset $j$ and their sequences in the window are positively correlated, Anticor claims a transfer from asset $i$ to asset $j$, with an amount equalling the cross-correlation term $M_{\mathrm{corr}}(i, j)$ minus the corresponding autocorrelation values $\min\{0, M_{\mathrm{corr}}(i, i)\}$ and $\min\{0, M_{\mathrm{corr}}(j, j)\}$. These transfer claims are finally normalised so as to keep the portfolio in the simplex domain.
+
+Due to its mean-reversion nature, it is difficult to obtain a useful bound (such as the universal regret bound) on Anticor. Although heuristic and lacking theoretical guarantees, Anticor empirically exhibits a competitive performance. Nonetheless, its heuristic nature cannot fully exploit the mean-reversion property, and therefore using learning algorithms that systematically capitalise on this property is highly desired.
+
+\subsubsection{Passive-aggressive mean reversion}
+
+\citet{pamr} developed the passive-aggressive mean reversion (PAMR) strategy, which is so called because it exploits the mean-reversion property via online passive-aggressive (PA) learning \citep{crammer06}.
+
+The main idea underlying PAMR is to pick a loss function that appropriately captures the mean-reversion property. That is, if the expected return based on the last price relative exceeds a pre-defined threshold, the loss should grow linearly; otherwise, it should be zero. In particular, to the best of our knowledge, \citet{pamr} were the first authors to adapt the $\epsilon$-insensitive loss function typically used in support vector regression \citep{vapnik98} to the context of online portfolio selection, defining the latter as
+\begin{equation}
+	\ell_{\epsilon}(\mathbf{b}; \mathbf{x}_t) \equiv
+	\begin{cases}
+		0 & \text{if } \mathbf{b}^\text{T}\mathbf{x}_t \leq \epsilon \\
+		\mathbf{b}^\text{T}\mathbf{x}_t - \epsilon & \text{otherwise}
+	\end{cases},
+\end{equation}
+where $\epsilon \in [0,1]$ is a parameter representing the mean-reversion threshold. Based on this loss function, PAMR passively maintains the last portfolio if its loss is zero; otherwise, it aggressively transitions to a new portfolio that can bring the loss down to zero. Formally, PAMR obtains the new portfolio weights by solving the following optimisation problem:
+\begin{equation}
+\label{eq:pamr-optprob}
+	\mathbf{b}_{t+1}
+	= \argmin_{\mathbf{b}\in\Delta_m} \; \frac{1}{2}\Vert\mathbf{b} - \mathbf{b}_t\Vert^2
+	\qquad \text{s.t.} \qquad \ell_{\epsilon}(\mathbf{b}; \mathbf{x}_t) = 0.
+\end{equation}
+As demonstrated in \citep[Proposition~1]{pamr}, this optimisation problem admits an elegant closed-form solution given by
+\begin{equation}
+	\mathbf{b}_{t+1} = \mathbf{b}_{t} - \tau_t(\mathbf{x}_t - \bar{x}_t\mathbf{1}),
+	\qquad \tau_t = \max\left\{0, \, \frac{\mathbf{b}_{t}^\text{T}\mathbf{x}_{t} - \epsilon}{\Vert\mathbf{x}_t - \bar{x}_t\mathbf{1}\Vert^2}\right\}.
+\end{equation}
+Since the authors ignored the non-negativity constraint on the portfolio weights in their derivation, they also added a simplex projection step \citep{duchi08}. The above closed-form update clearly reflects the mean-reversion trading idea by gradually transferring wealth from the well-performing to the poorly-performing assets, where over(under)-performance is measured relative to the cross-sectional average of price relatives. It also coincides with the general form of return-based contrarian strategies \citep[Eq.~(1)]{lo90}, except for the adaptive multiplier $\tau_t$. Besides the optimisation problem in Eq. \eqref{eq:pamr-optprob}, the authors also proposed two variants to handle potential noise in price relatives, by introducing some non-negative slack variables into the optimisation, a widely used technique in soft-margin classification.
+
+Similar to the Anticor algorithm, due to PAMR's mean-reversion nature, it is hard to derive a meaningful theoretical regret bound. Nevertheless, PAMR achieves significant performance, beating several competing algorithms, and tends to be robust across different parameter configurations. It also enjoys linear update time and runs extremely fast in the backtests, which shows its practicability in large-scale real-world applications. The underlying idea is to exploit single-period mean reversion, which is empirically verified by its evaluation on several real market data sets. However, PAMR suffers from drawbacks in risk management, as it experiences significant performance degradation if its single-period mean reversion assumption is not verified. This is clearly indicated by its performance on the Dow Jones Industrial Average (DJIA) data set \citep{borodin04, pamr}.
+
+
+\subsubsection{Confidence-weighted mean reversion}
+
+To further exploit second-order information, \citet{cwmr} proposed the confidence-weighted mean reversion (CWMR) algorithm. In this context, second-order information refers to the covariance of portfolio weights (not prices or price relatives), and mean reversion is exploited via confidence-weighted (CW) online learning \citep{dredze08}.
+
+Basically, CWMR models the portfolio weight vector as a multivariate Gaussian distribution with mean $\boldsymbol{\mu} \in \mathbb{R}^m$ and diagonal covariance matrix $\boldsymbol{\Sigma} \in \mathbb{R}^{m\times m}$, with non-zero diagonal elements $\sigma^2$ and zero off-diagonal elements. While the mean represents an estimate of the future portfolio, the diagonal covariance matrix measures the confidence we have in that estimate. Then, CWMR sequentially updates the mean and covariance matrix of this Gaussian distribution and samples portfolios at the beginning of each period. In particular, the authors define $\mathbf{b}_t \in \mathcal{N}(\boldsymbol{\mu}_t, \, \boldsymbol{\Sigma}_t)$ and update the distribution parameters according to a mechanism similar to PA learning. More precisely, CWMR keeps the next distribution close to the last distribution in terms of Kullback-Leibler (KL) divergence, under the condition that the probability of the achieved portfolio return being lower than $\epsilon$ exceeds a specified threshold. Formally, the CWMR optimisation problem is
+\begin{equation}
+	(\boldsymbol{\mu}_{t+1}, \, \boldsymbol{\Sigma}_{t+1})
+	= \argmin_{\boldsymbol{\mu} \in \Delta_m, \, \boldsymbol{\Sigma}} \; \mathrm{KL}\left[\mathcal{N}(\boldsymbol{\mu}, \, \boldsymbol{\Sigma}) \, \Vert \, \mathcal{N}(\boldsymbol{\mu}_t, \, \boldsymbol{\Sigma}_t)\right]
+	\quad \text{s.t.} \quad \mathbb{P}\Big\{\boldsymbol{\mu}^\text{T} \mathbf{x}_t \leq \epsilon\Big\} \geq \theta.
+\end{equation}
+To solve this problem, \citet{li13} transformed it using two techniques. One transformed optimisation problem \citep[Eq.~(3)]{li13} is
+\begin{align}
+	& (\boldsymbol{\mu}_{t+1}, \, \boldsymbol{\Sigma}_{t+1})
+	= \argmin \quad \frac{1}{2}\left[\log\frac{|\boldsymbol{\Sigma}_t|}{|\boldsymbol{\Sigma}|} + \mathrm{Tr}(\boldsymbol{\Sigma}_{t}^{-1}\boldsymbol{\Sigma}) + (\boldsymbol{\mu}_t - \boldsymbol{\mu})^\text{T}\boldsymbol{\Sigma}_{t}^{-1}(\boldsymbol{\mu}_t - \boldsymbol{\mu})\right]
+	\nonumber \\
+	& \text{s.t.} \qquad \epsilon - \boldsymbol{\mu}^\text{T}\mathbf{x}_t \geq \phi\mathbf{x}_t^\text{T}\boldsymbol{\Sigma}\mathbf{x}_t, \quad \boldsymbol{\mu}^\text{T}\mathbf{1} = 1, \quad \boldsymbol{\mu} \succeq \mathbf{0}.
+\end{align}
+Solving the transformed problem, one can obtain the following closed-form update scheme \citep[Proposition~4.1]{li13}:
+\begin{equation}
+	\boldsymbol{\mu}_{t+1} = \boldsymbol{\mu}_t - \lambda_{t+1}\boldsymbol{\Sigma}_t(\mathbf{x}_t - \widetilde{x}_t\mathbf{1}),
+	\quad \boldsymbol{\Sigma}_{t+1}^{-1} = \boldsymbol{\Sigma}_t^{-1} + 2\lambda_{t+1}\phi\mathbf{x}_t\mathbf{x}_t^\text{T},
+\end{equation}
+where $\lambda_{t+1}$ corresponds to the Lagrangian multiplier calculated by Eq. (11) in \citep{li13} and $\widetilde{x}_t = \frac{\mathbf{1}^\text{T}\boldsymbol{\Sigma}_t\mathbf{x}_t}{\mathbf{1}^\text{T}\boldsymbol{\Sigma}_t\mathbf{1}}$ denotes the confidence-weighted price relative mean. Clearly, the above update scheme captures the mean-reversion principle, and exploits both the first- and second-order information of a portfolio vector.
+
+As is the case with Anticor and PAMR, CWMR's mean reversion nature makes it hard to obtain a meaningful theoretical regret bound for the algorithm. The experiments conducted in \citep{cwmr, li13} demonstrate that the CWMR strategy is able to outperform the state-of-the-art, including PAMR, which only exploits the first-order information of a portfolio vector. However, CWMR also relies on the assumption of single-period mean reversion, and so suffers from the same risk-management issue affecting PAMR.
+
+\subsubsection{Online moving average reversion}
+
+Observing that PAMR and CWMR implicitly assume \emph{single-period} mean reversion, causing them to fail on the DJIA data set, \citet{olmar} designed a \emph{multi-period} mean reversion strategy named online moving average reversion, or OLMAR for short.
+
+OLMAR is based on the observation that PAMR and CWMR implicitly predict future prices to be equal to previous prices, i.e.\ $\widehat{\mathbf{p}}_{t+1} = \mathbf{p}_{t-1}$, where $\mathbf{p}$ is the vector of asset prices. Such an extreme single-period prediction is most likely the cause of the poor performance of PAMR and CWMR on certain real-word data sets, including the DJIA one. To circumvent this drawback, the authors of \citep{olmar} proposed a multi-period mean reversion algorithm, which explicitly predicts the next price vector using the moving average of past price vectors. More precisely, using the simple moving average $MA_t(w) = \frac{1}{w}\sum_{i=t-w+1}^t \mathbf{p}_i$, where $w$ is the window length, they predict the next price relative to be
+\begin{equation}
+	\widehat{\mathbf{x}}_{t+1}(w) = \frac{MA_t(w)}{\mathbf{p}_t} = \frac{1}{w}\left(1 + \frac{1}{\mathbf{x}_t} + \ldots + \frac{1}{\odot_{i=0}^{w-2}\mathbf{x}_{t-i}}\right).
+\end{equation}
+Then, similarly to PAMR, they adopt online PA learning to learn portfolios. Formally,
+\begin{equation}
+	\mathbf{b}_{t+1}
+	= \argmin_{\mathbf{b}\in\Delta_m} \; \frac{1}{2}\Vert\mathbf{b}-\mathbf{b}_t\Vert^2
+	\qquad \text{s.t.} \qquad \mathbf{b}^\text{T}\widehat{\mathbf{x}}_{t+1} \geq \epsilon.
+\end{equation}
+Unlike PAMR, this formulation seeks to achieve a `sufficiently good' performance based on the predicted price relative and the performance threshold $\epsilon$. Its solution being similar to PAMR's, we will omit it here. In practice, OLMAR achieves the best performance across most data sets, especially those on which PAMR and CWMR underperform.
+
+\subsubsection{Robust median reversion}
+
+Since the previously presented mean-reversion algorithms fail to consider noise and outliers in the data, they often suffer from estimation error, which leads to sub-optimal portfolios when such noise/outliers are indeed present. For this reason, \citet{rmr} suggested monetising mean reversion via a robust $\mathrm{L}_1$-median estimator, based on which they devised a novel portfolio selection strategy called robust median reversion (RMR).
+
+The basic principle behind RMR is to explicitly estimate the next price vector via a robust $\mathrm{L}_1$-median at the end of the $t$th period. In other words, $\widehat{\mathbf{p}}_{t+1} = \boldsymbol{\mu}_{t+1}$, with
+\begin{equation}
+	\boldsymbol{\mu}_{t+1}
+	 = \argmin_{\boldsymbol{\mu}} \; \sum_{i=0}^{w-1} \Vert\mathbf{p}_{t-i} - \boldsymbol{\mu}\Vert.
+\end{equation}
+In plain English, this is the point with minimal sum of Euclidean distances to all the given price vectors. The solution to this problem is unique provided the data points are not collinear \citep{weiszfeld37}. The corresponding price relative is
+\begin{equation}
+	\widehat{\mathbf{x}}_{t+1}(w) = \frac{\boldsymbol{\mu}_{t+1}}{\mathbf{p}_t}.
+\end{equation}
+Using this predicted price relative, RMR follows a portfolio optimisation method similar to OLMAR's to obtain a recursion on the portfolio weights. Empirically, RMR outperforms the state-of-the-art on most data sets.
+
+
+
+
+\subsection{Pattern-matching approaches}
+\label{sec:pattern-matching}
+
+Besides the two categories of follow-the-winner/follow-the-loser strategies, another type of strategies may utilise both winners and losers. Such strategies fall under the umbrella of pattern matching, which spans non-parametric sequential investment strategies that guarantee universal consistency, meaning they achieve optimality of growth for any stationary or ergodic market process. Note that unlike BCRP's optimality for i.i.d. markets (which, by the way, motivates follow-the-winner approaches), pattern-matching approaches are suitable for non-i.i.d. markets and maximise the conditional expectation of \emph{log}-returns given past observations. In non-i.i.d. markets, there is a big difference between the optimal growth rate and the growth rate of BCRP. For example, for New York Stock Exchange (NYSE) datasets during the 1962--2006 period, the average annual yield (AAY) of BCRP is about 20\%, whereas pattern-matching strategies achieve AAYs well beyond 30\% (see \citep[Chapter~2]{gyorfi12}).
+
+Now let us describe the main idea of the pattern-matching approaches \citep{bnn} which consist of two steps: the sample-selection step and the portfolio-optimisation step\footnote{Here we only introduce the key idea. All algorithms in this category consist of an additional aggregation step, which is a special case of MLAs in Section~\ref{sec:mlas}.}. In the first step, one selects an index set $C$ of similar historical price relatives which is then used to predict the next price relative. After constructing this similarity set, each sample price relative $\mathbf{x}_i$, $i \in C$, is assigned a probability $P_i$. Existing methods often employ uniform probabilities, i.e.\ $P_i = \frac{1}{|C|}$, where $|\cdot|$ denotes the cardinality of a set. The second step, portfolio optimisation, learns an optimal portfolio based on the similarity set obtained in the first step, i.e.\
+\begin{equation}
+	\mathbf{b}_{t+1} = \argmax_{\mathbf{b}\in\Delta_m} \; U(\mathbf{b}; C),
+\end{equation}
+where $U(\mathbf{b}; C)$ is a specified utility function. A commonly used utility is the log utility which takes the form $U(\mathbf{b}; C) = \sum_{i \in C}\log(\mathbf{b}^\text{T}\mathbf{x}_i)$. In case of an empty similarity set, a uniform portfolio is adopted as the optimal portfolio.
+
+\subsubsection{Sample-selection techniques}
+
+The general idea in this step is to generate samples of similar historical price relatives by comparing the preceding market windows of two price relatives. Suppose that we want to locate the price relatives that are similar to next price relative $\mathbf{x}_{t+1}$. The basic routine is to iterate over all historic price relative vectors $\mathbf{x}_i$, for $i = w + 1, \ldots, t$, and count $\mathbf{x}_i$ as similar one if the preceding market window $\mathbf{x}_{i-w:i-1}$ is similar to the latest market window $\mathbf{x}_{t-w+1:t}$. The set $C$ is maintained to contain the indices of similar price relatives. Note that the market window is a $(w \times m)$ matrix, and the similarity between two market windows is often calculated on the concatenated $(w \times m)$-dimensional vector.
+
+Non-parametric histogram-based sample selection \citep{gyorfi03} predefines a set of discretised partitions, partitions both the latest market window $\mathbf{x}_{t-w+1:t}$ and the historical market window $\mathbf{x}_{i-w:i-1}$, $i = w + 1, \ldots, t$, and finally chooses price-relative vectors whose $\mathbf{x}_{i-w:i-1}$  is in the same partition as $\mathbf{x}_{t-w+1:t}$. In particular, given a partition $P_l = A_{j,l}$ of $\mathbb{R}^m_+$ into $d_l$ disjoint sets and a corresponding  discretisation function $G_l(\mathbf{x}) = j$ if $\mathbf{x} \in A_{l,j}$, we can define the similarity set as
+\begin{equation}
+	C_{H}(\mathbf{x}_{1:t}, w) = \Big\{w < i < t+1 \, : \, G_l(\mathbf{x}_{t-w+1:t}) = G_l(\mathbf{x}_{i-w:i-1})\Big\}.
+\end{equation}
+Note that $l$ is adopted to aggregate multiple experts.
+
+Non-parametric kernel-based sample selection \citep{bnn} identifies the similarity set by comparing two market windows by means of the Euclidean distance:
+\begin{equation}
+	C_{K}(\mathbf{x}_{1:t}, w) = \Big\{w < i < t+1 \, : \, \Vert\mathbf{x}_{t-w+1:t} - \mathbf{x}_{i-w:i-1}\Vert \leq \frac{c}{l}\Big\},
+\end{equation}
+where $c$ and $l$ are thresholds used to control the number of similar samples. Note that the authors adopted two threshold parameters for theoretical analysis.
+
+Nonparametric nearest-neighbour sample selection \citep{bnn2} looks for those price relatives whose preceding market windows are within the nearest neighbours of latest market windows in terms of the Euclidean distance:
+\begin{equation}
+	C_{N}(\mathbf{x}_{1:t}, w) = \Big\{w < i < t+1 \, : \,  \mathbf{x}_{i-w:i-1} \text{ is among the } l \text{ NNs of } \mathbf{x}_{t-w+1:t}\Big\},
+\end{equation}
+where $l$ is a threshold parameter.
+
+Correlation-driven nonparametric sample selection \citep{corn} identifies the linear similarity among two market windows via Pearson's correlation coefficient:
+\begin{equation}
+	C_{C}(\mathbf{x}_{1:t}, w) = \Big\{w < i < t+1 \, : \,  \frac{\mathrm{cov}(\mathbf{x}_{i-w:i-1}, \mathbf{x}_{t-w+1:t})}{\mathrm{std}(\mathbf{x}_{i-w:i-1})\mathrm{std}(\mathbf{x}_{t-w+1:t})} \geq \rho\Big\},
+\end{equation}
+where $\rho$ is a pre-defined correlation coefficient threshold.
+
+
+\subsubsection{Portfolio-optimisation techniques}
+
+The second step of pattern-matching approaches is to construct an optimal portfolio based on the similarity set $C$. The two main approaches are Kelly's CGT and Markowitz's mean-variance theory, as we shall describe in the following paragraphs.
+
+\citet{bnn} proposed to derive a log-optimal (Kelly) portfolio based on the similar price relatives found in the first step. Given a similarity set, the log-optimal utility function is defined as
+\begin{equation}
+	U_{L}(\mathbf{b}; C(\mathbf{x}_{1:t}))
+	= \mathbb{E}[\log(\mathbf{b}^\text{T}\mathbf{x}) \, | \, \mathbf{x}_i, i \in C(\mathbf{x}_{1:t})]
+	= \sum_{i \in C(\mathbf{x}_{1:t})} P_i \log(\mathbf{b}^\text{T}\mathbf{x}_i),
+\end{equation}
+where $P_i$ denotes the probability assigned to a similar price relative $\mathbf{x}_i, i \in C(\mathbf{x}_{1:t})$. \citet{bnn} assume a uniform probability across similar samples, leading to the following utility function:
+\begin{equation}
+	U_{L}(\mathbf{b}; C(\mathbf{x}_{1:t}))
+	= \sum_{i \in C(\mathbf{x}_{1:t})} \log(\mathbf{b}^\text{T}\mathbf{x}_i).
+\end{equation}
+
+\citet{gyorfi07} introduced the semi-log optimal strategy, which approximates the log in the log-optimal utility function to make it more tractable. The semi-log optimal utility function is defined as
+\begin{equation}
+	U_{S}(\mathbf{b}; C(\mathbf{x}_{1:t}))
+	= \mathbb{E}[f(\mathbf{b}^\text{T}\mathbf{x}) \, | \, \mathbf{x}_i, i \in C(\mathbf{x}_{1:t})]
+	= \sum_{i \in C(\mathbf{x}_{1:t})} P_i f(\mathbf{b}^\text{T}\mathbf{x}_i),
+\end{equation}
+where $f$ is defined as the second-order Taylor expansion of $\log z$ at $z = 1$, i.e.\ $f(z) = z - 1 -\frac{1}{2}(z-1)^2$. The authors also assume a uniform probability among similar samples.
+
+\citet{ottucsak07} proposed the nonparametric Markowitz-type strategy, which is a generalisation of the aforementioned semi-log optimal strategy. The basic idea behind this Markowitz-type strategy is to represent the portfolio returns using Markowitz's principle to trade off portfolio mean versus variance. To be more specific, the Markowitz-type utility function is defined as
+\begin{equation}
+	U_{M}(\mathbf{b}; C(\mathbf{x}_{1:t}))
+	= \mathbb{E}[\mathbf{b}^\text{T}\mathbf{x} \, | \, \mathbf{x}_i, i \in C(\mathbf{x}_{1:t})] - \lambda\mathrm{Var}[\mathbf{b}^\text{T}\mathbf{x} \, | \, \mathbf{x}_i, i \in C(\mathbf{x}_{1:t})],
+\end{equation}
+where $\lambda$ is a trade-off parameter. In particular, a simple numerical transformation shows that semi-log optimal portfolio is an instance of the log-optimal utility function with a specified $\lambda$.
+
+In any of the aforementioned procedures, if the similarity set is non-empty, we can obtain an optimal portfolio based on similar price relatives and their probability distribution. In case of an empty set, we can either choose a uniform or a previous portfolio.
+
+
+
+
+\subsection{Meta-learning algorithms}
+\label{sec:mlas}
+
+Meta-learning algorithms (MLAs) \citep{das11} represent yet another branch of online portfolio selection that is closely related to expert learning \citep{lugosi}. This branch is directly applicable to a fund of funds (FOF) allocating resources to `child' managers. In general, MLA works with several base experts, either from the same strategy class or different classes. Each expert outputs a portfolio vector for the coming period, and MLA combines these portfolios to form a final portfolio, which is used at the next rebalancing. MLAs are similar to follow-the-winner algorithms; however, they are proposed to handle a broader class of experts, in which CRP can serve as a special case. On one hand, an MLA system can be used to smooth the final performance with respect to all the underlying experts, especially when some of these experts are sensitive to certain environments/parameters. On the other hand, combining a universal strategy and a heuristic algorithm for which it is not straightforward to obtain a theoretical bound (such as Anticor), can provide the universal property to the whole MLA system. Finally, MLA is able to combine all existing algorithms, thus providing a much broader area of application.
+
+\subsubsection{Aggregating algorithms}
+
+Besides the algorithms discussed in Section~\ref{sec:aa-algos}, the aggregating algorithm (AA) can also be generalised to include more sophisticated base experts. Given a learning rate $\eta > 0$, a measurable set of experts $A$ with a prior measure $P_0$, a loss function $\ell(\mathbf{x}, \gamma)$, and an action $\gamma_{t}(\theta)$ chosen by expert $\theta$ at time $t$, AA updates the experts' weights as follows:
+\begin{equation}
+	P_{t+1}(A) = \int_{A} \, \beta^{\ell(\mathbf{x}_t, \gamma_{t}(\theta))} P_{t}(\mathrm{d}\theta),
+\end{equation}
+where $\beta = e^{-\eta}$ and $P_t$ denotes the measure representing the allocation of wealth among experts at time $t$.
+
+\subsubsection{Fast universalisation}
+
+\citet{akcoglu02, akcoglu04} proposed fast universalisation (FU), which extends Cover's UP \citep{cover} from a parameterised CRP class to a wide spectrum of investment strategies, including trading strategies operating on a single stock and portfolio strategies allocating wealth among the whole stock market. FU's basic idea is to evenly split the wealth among a set of base experts, let these experts operate on their own, and finally pool their wealth. FU's update is similar to that of Cover's UP, and it also asymptotically achieves a wealth equal to an optimal fixed convex combination of base experts. In the case where all experts are CRPs, FU is reduced to Cover's UP.
+
+Besides the universalisation over a continuous parameter space, various discrete buy-and-hold (BAH) combinations have been adopted by various existing algorithms. Rewritten in discrete form, the corresponding portfolio updates can be straightforwardly obtained. For example, \citet{borodin04} adopted the BAH strategy to combine Anticor experts with a finite number of window sizes. Similarly, \citet{pamr} combined PAMR experts with a finite number of mean-reversion thresholds. Moreover, all pattern-matching approaches described in Section~\ref{sec:pattern-matching} rely on BAH to combine experts characterised by finite number of window sizes.
+
+\subsubsection{Online gradient and Newton updates}
+\label{sec:ogu}
+
+\citet{das11} proposed two meta-optimisation algorithms, namely online gradient updates (OGU) and online Newton updates (ONU), which are natural extensions of EG and ONS, respectively. Since their updates and proofs are similar to their ancestors, we shall omit them here. Theoretically, OGU and ONU can achieve the same growth rate as the optimal convex combination of underlying experts. In particular, if any base expert is universal, the final meta-algorithm benefits from the universal property as well.
+
+\subsubsection{Follow the leading history}
+
+\citet{hazan09} developed a follow-the-leading-history (FLH) algorithm for changing environments. FLH can incorporate various universal base experts, such as the ONS algorithm. Its basic idea is to maintain a working set of finite experts, which are dynamically activated/deactivated based on their performance, akin to the Herbster-Warmuth algorithm \citep{herbster}. Unlike other MLAs where experts operate from the same starting point, FLH adopts experts starting at different periods. Theoretically, the FLH algorithm with universal methods is universal. When equipped with ONS, FLH can significantly outperform ONS.
+
+
+
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+This chapter conducted a brief survey of the online portfolio selection (OLPS) literature, an interdisciplinary field at the intersection of machine learning and finance. Focusing on algorithmic aspects, we began by formulating the OLPS task as a sequential decision problem and further grouped the existing algorithms into five major categories: benchmarks, follow the winner, follow the loser, pattern matching and MLAs. We note that although quite a few algorithms have been proposed in the literature, many open research problems remain unsolved and deserve further exploration. This was one of the inspirations for the methods developed in this thesis.

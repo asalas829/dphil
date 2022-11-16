@@ -1,0 +1,1137 @@
+\chapter{Adaptive Gradient Methods for Dynamic Online Optimisation}
+\label{ch:oo}
+
+\minitoc
+
+
+In the previous chapter, we saw how online regression can be enhanced through the use of Bayesian methods. Another important subfamily of online learning that would significantly benefit from a Bayesian approach is online convex optimisation. In this area, online gradient descent (OGD) is arguably the most popular algorithm. However, OGD can often be difficult to use for practitioners, because its performance is very sensitive to the choice of learning rate parameter. In this chapter, we shall discuss how a Bayesian treatment of OGD can overcome this limitation, by providing a mechanism to infer the learning rate from the data. The resulting algorithm, named \emph{maximum posterior gradient} (MAPGRAD), also allows us to cheaply compute uncertainty estimates of the learner's actions, based on an approximate posterior distribution over these. 
+
+In addition to the above, we shall demonstrate how the generalised passive-aggressive framework developed in the previous chapter can be adapted to the context of bandit convex optimisation. The resulting \emph{passive-aggressive convex optimisation} (PACO) method helps alleviate the difficulties in tuning the learning rate within that context.
+
+
+\section{Introduction}
+\label{sec:intro}
+
+Online convex optimisation (OCO) is a fundamental tool for solving a wide variety of machine learning problems, such as online routing, ad selection for search engines and spam filtering \citep{shalev-shwartz11, oco}. It can be formulated as a repeated game between a learner and an adversary. On round $t$ of the game, the learner selects an action, i.e.\ a point $\mathbf{w}_t$ from a convex set $\Omega$, while the adversary chooses a convex loss function $f_t : \Omega \rightarrow \mathbb{R}$. Subsequently, the learner incurs a loss of $f_t(\mathbf{w}_t)$ and is provided with feedback $\phi_t(\mathbf{w}_t, f_t)$ about the loss function $f_t(\cdot)$ selected by the adversary. In this work, we shall consider the following three canonical feedback structures:
+\begin{enumerate}
+	\item \emph{full-information feedback}, in which the entire function $f_t(\cdot)$ is revealed to the learner after her selection of $\mathbf{w}_t$;
+%	\item \emph{subgradient feedback}, meaning the learner only receives subgradient information $\mathbf{g}_t \in \partial f_t(\mathbf{w}_t)$, where $\partial f(x)$ denotes the subdifferential set of a function $f(\cdot)$ evaluated at $x$ (see Definition~\ref{def:subgradient});
+\begin{mccorrection}
+	\item \emph{gradient feedback}, meaning the learner only receives gradient information $\mathbf{g}_t \equiv \nabla f_t(\mathbf{w}_t)$, i.e. the gradient of the loss function $f_t(\cdot)$ evaluated at the weight vector $\mathbf{w}_t$;
+\end{mccorrection}
+	\item \emph{bandit feedback}, characterised by the revelation of the incurred loss $f_t(\mathbf{w}_t)$ only.
+\end{enumerate}
+An outline of the OCO problem under these feedback scenarios is given in Algorithm~\ref{alg:oco}.
+\begin{algorithm}[H]
+  \caption{Online Convex Optimisation}
+  \label{alg:oco}
+  \begin{algorithmic}[1]
+    \STATE {\bfseries Input:} a convex set $\Omega$
+    \FOR{$t=1, 2, \ldots$}
+      \STATE the learner chooses a vector $\mathbf{w}_t \in \Omega$
+      \STATE the adversary selects a loss function $f_t : \Omega \rightarrow \mathbb{R}$
+      \STATE the learner incurs a loss of $f_t(\mathbf{w}_{t})$ and observes
+      \begin{itemize}
+		\item the loss function $f_t(\cdot)$ in the full-information setting
+%		\item the subgradient $\mathbf{g}_t \in \partial f_t(\mathbf{w}_t)$ in the subgradient-feedback setting
+\begin{mccorrection}
+		\item the gradient $\mathbf{g}_t \equiv \nabla f_t(\mathbf{w}_t)$ in the gradient-feedback setting
+\end{mccorrection}
+		\item the loss value $f_t(\mathbf{w}_t)$ in the bandit-feedback setting
+	\end{itemize}
+    \ENDFOR
+  \end{algorithmic}
+\end{algorithm}
+
+The standard performance measure for OCO problems is the so-called \emph{regret}, which is defined as the difference between the learner's cumulative loss and that of a relatively weak benchmark, namely the single best action in hindsight, or a \emph{static clairvoyant}:
+\begin{equation}
+\label{eq:static-regret}
+	\sum_{t=1}^T f_t(\mathbf{w}_t) \, - \, \min_{\mathbf{w} \in \Omega} \, \sum_{t=1}^T f_t(\mathbf{w}).
+\end{equation}
+Over the past decades, various online algorithms have been proposed to yield sublinear regret under a variety of feedback structures, with a focus on a class of either convex or strongly convex loss functions.
+%The original work of \citet{zinkevich03} considered the class of convex functions and focused on the case of full-information feedback, providing an \emph{online gradient descent} (OGD) algorithm with regret of order $\sqrt{T}$. \citet{hazan07} achieve regret of order $\log T$ for a class of strongly convex loss functions when the subgradient of $f_t(\cdot)$, evaluated at $\mathbf{w}_t$, is observed. Additional algorithms were shown to be rate-optimal under further assumptions on the function class (see, e.g., \citep{kalai05, hazan07}), or other feedback structures such as multipoint access \citep{agarwal10}.
+\begin{mccorrection}
+The original work of \citet{zinkevich03} considered the class of convex functions and focused on the case of full-information feedback, providing an \emph{online gradient descent} (OGD) algorithm with regret of order $\sqrt{T}$. \citet{hazan07} achieve regret of order $\log T$ for a class of strongly convex loss functions when the gradient of $f_t(\cdot)$, evaluated at $\mathbf{w}_t$, is observed. Additional algorithms were shown to be rate-optimal under further assumptions on the function class (see, e.g., \citep{kalai05, hazan07}), or other feedback structures such as multipoint access \citep{agarwal10}.
+\end{mccorrection}
+
+Though equipped with rich theories, the notion of regret fails to illustrate the performance of online algorithms in a dynamic setting, as a \emph{static} comparator is used in Eq. \eqref{eq:static-regret}. To overcome this limitation, there has been a recent surge of interest in analysing a more stringent metric, namely \emph{dynamic regret} \citep{hall&willett13, hall&willett15, jadbabaie15, besbes15, mokhtari16, yang16, zhang17, gao18}, in which the cumulative loss of the learner is compared against that attained by a sequence $\mathbf{w}_{1:T}^* \equiv \mathbf{w}_1^*, \mathbf{w}_2^*, \ldots, \mathbf{w}_T^*$ of instantaneous-loss minimisers, i.e.\
+\begin{equation}
+\label{eq:dynamic-regret}
+  \textbf{Reg}_T^d
+%  \equiv \textbf{Reg}_T^d(\mathbf{w}_{1:T}^*)
+  \equiv \sum_{t=1}^T f_t(\mathbf{w}_t) \, - \, \sum_{t=1}^T f_t(\mathbf{w}_t^*)
+  = \sum_{t=1}^T f_t(\mathbf{w}_t) \, - \, \sum_{t=1}^T \min_{\mathbf{w} \in \Omega} \, f_t(\mathbf{w}),
+\end{equation}
+where $\mathbf{w}^*_t \in \argmin_{\mathbf{w} \in \Omega} \, f_t(\mathbf{w})$.
+In other words, Eq. \eqref{eq:dynamic-regret} measures the quality of an algorithm, and the sequence $\mathbf{w}_{1:T}$ of actions it generates, by comparing its performance to a \emph{dynamic clairvoyant} who knows the sequence of loss functions in advance, and hence selects the minimiser $\mathbf{w}_t^*$ at each step.
+%Compared to traditional regret in Eq. \eqref{eq:static-regret} (also termed \emph{static regret}), dynamic regret is more aggressive since the dynamic clairvoyant can never do worse than her static counterpart, by virtue of the following property:
+%\begin{equation}
+%	\sum_{t=1}^T \min_{\mathbf{w} \in \Omega} \, f_t(\mathbf{w})
+%	\, \leq \, \min_{\mathbf{w} \in \Omega} \, \sum_{t=1}^T f_t(\mathbf{w}).
+%\end{equation}
+
+\begin{mccorrection}
+Compared to traditional regret in Eq. \eqref{eq:static-regret} (also termed \emph{static regret}), dynamic regret is more aggressive in the sense that
+\begin{equation}
+	\min_{\mathbf{w} \in \Omega} \, \sum_{t=1}^T f_t(\mathbf{w})
+	\, \geq \, \sum_{t=1}^T \min_{\mathbf{w} \in \Omega} \, f_t(\mathbf{w}),
+\end{equation}
+which is a consequence of the fact that the maximum of a sum is at most the sum of maxima (see, e.g., \url{https://math.stackexchange.com/questions/
+740074/maximum-of-sum-is-at-most-the-sum-of-maxima}).
+As the next example from \citep{besbes15} shows, the dynamic clairvoyant used as benchmark in Eq. \eqref{eq:dynamic-regret} can be a significantly harder target than the single best action defining the static clairvoyant in Eq. \eqref{eq:static-regret}.
+\begin{example}
+Assume an action set $\Omega = [-1, 2]$. % and variation budget $V_T = 1$. Set
+Set
+\begin{equation}
+	f_{t}(w) = 
+	\begin{cases}
+		w^2 & \text{if } t \leq T/2 \\
+		w^2 - 2w & \text{otherwise}
+	\end{cases}
+\end{equation}
+for any $w \in \Omega$. Then, the single best action is suboptimal at each step, and
+\begin{equation}
+	\min_{w\in\Omega} \sum_{t=1}^T f_t(w) - \sum_{t=1}^T \min_{w \in \Omega} \, f_t(w) = \frac{T}{4}.
+\end{equation}
+\end{example}
+Hence, algorithms that achieve performance that is `close' to the static clairvoyant in the static OCO setting may perform quite poorly in the dynamic OCO setting (in particular, they may, as the example above suggests, incur linear regret in that setting). These algorithms include, but are in no way limited to, the seminal online gradient descent (OGD) algorithm with a learning-rate schedule of $\eta_t = 1/\sqrt{t}$ \citep{zinkevich03}. Therefore, we shall refrain from comparing the impact of the methods introduced in this chapter to that schedule on (dynamic) regret. Nevertheless, for the avid reader, in Section~\ref{sec:adapamr-eval} we compare the empirical performance of Zinkevich's OGD algorithm against that of the proposed methods in this thesis.
+\end{mccorrection}
+%The other clear implication is that any algorithm achieving sublinear dynamic regret will necessarily also have sublinear static regret (note however that the converse is not generally true). For this reason, we shall restrict our attention to what we call \emph{dynamic OCO}, that is online convex optimisation for which dynamic, rather than static, regret is the performance metric.
+
+As in the case of static OCO --- i.e., online convex optimisation under static regret --- the OGD method has established itself as the candidate of choice for solving dynamic OCO problems, as demonstrated by its widespread use in the literature \citep{besbes15, mokhtari16, yang16, zhang17, gao18}.
+However, OGD can often be frustrating to use for practitioners, because its performance is very sensitive to the choice of the learning rate parameter. While previous work in the dynamic OCO literature has proposed various ways to select the learning rate, these are based on theoretical considerations as to which assumptions of smoothness, convexity and temporal variation in the loss-function sequence are required to minimise the corresponding regret bounds, in some cases even causing the OGD algorithm to become unfeasible without the benefit of hindsight.
+
+To overcome this practical hurdle, we develop in this chapter two novel adaptation techniques for tuning the learning rate parameter in an \emph{online} and \emph{data-dependent} fashion. Specifically, we propose the following algorithms:
+\begin{itemize}
+	\item \emph{Maximum Posterior Gradient} (MAPGRAD), in which we interpret OGD as a Bayesian hierarchical model, treat the learning rate as a \emph{nuisance parameter} and marginalise it, and set the weight vector equal to its \emph{maximum a posteriori} (MAP) value under the resulting marginal weight posterior;
+	\item \emph{Passive-Aggressive Convex Optimisation} (PACO), a generalisation of online passive-aggressive (PA) learning \citep{crammer06} to general loss functions and feasibility regions other than $\mathbb{R}^n$, allowing this framework to be applied successfully to a dynamic OCO setting.
+\end{itemize}
+%Since it requires knowledge of the loss $f_t(\mathbf{w}_t)$ incurred by the learner at each stage $t$, the PACO algorithm can only be used in the full-information and bandit settings. As for MAPGRAD, it is applicable under both the full-information and subgradient feedback structures.
+\begin{mccorrection}
+Since it requires knowledge of the loss $f_t(\mathbf{w}_t)$ incurred by the learner at each stage $t$, the PACO algorithm can only be used in the full-information and bandit settings. As for MAPGRAD, it is applicable under both the full-information and gradient feedback structures. Additionally, wherever needed, we shall assume that the loss functions are differentiable.
+\end{mccorrection}
+
+To the best of our knowledge, this is pioneering work as far as the dynamic OCO literature is concerned. Granted, beyond this literature, there has been a rich line of work on adaptive learning rate methods over the past few years\footnote{This continues to be an active area of research at the time of writing, especially in the deep learning community.} and, in the next section, we briefly review those that are somehow related to our work. However, we are not aware of any techniques that have approached the automatic tuning of the learning rate from a Bayesian angle, making our MAPGRAD algorithm one of a kind.
+
+
+\section{Related Work}
+\label{sec:related-work}
+
+The closest papers to our work, at least in spirit, are \citep{badam}, \citep{probabilistic-ipm} and \citep{blondel14}. Below we discuss the similarities, and differences, between their work and ours. Other prominent, albeit unrelated, adaptive learning rate methods include ADAGRAD \citep{adagrad} and exponential-moving-average variants thereof, namely RMSPROP \citep{rmsprop}, ADADELTA \citep{adadelta} and ADAM \citep{adam}.
+
+\paragraph{\citep{badam}}
+
+In the spirit of MAPGRAD, \citet{badam} have recently introduced a framework to cheaply build Bayesian neural networks from adaptive learning rate methods such as ADAGRAD and ADAM. Like ours, this framework is also based on a novel probabilistic interpretation of a generic update rule encompassing any adaptive gradient-based scheme, and as such is an elegant generalisation of MAPGRAD. Nevertheless, since the focus of their paper is on obtaining cheap uncertainty estimates for neural-network weights, \citet{badam} fail to discuss how to leverage their Bayesian approach to infer the learning rate parameter from the data.
+
+\paragraph{\citep{probabilistic-ipm}}
+
+This is another interesting paper that bears much resemblance to our MAPGRAD framework. The authors highlight a connection between the incremental proximal method (IPM) --- to which online gradient descent provides a first-order approximation, as we shall see later --- and stochastic filters. This connection is obtained as the result of a probabilistic interpretation of IPM. Interestingly, the authors demonstrate that in the case of linear regression, the probabilistic variant of IPM can be viewed as a Kalman filter. By analogy, for non-linear regressors, there is a direct correspondence between probabilistic IPM and the extended Kalman filter. Note however that, unlike MAPGRAD, the goal of the Bayesian treatment in \citep{probabilistic-ipm} is not to derive an adaptation mechanism for tuning the learning rate parameter. 
+
+\paragraph{\citep{blondel14}}
+
+An adaptive learning rate method that is closely related to our PACO algorithm is NN-PA, which was introduced in \citep{blondel14}. Like PACO, NN-PA is a variant of online passive-aggressive learning that was proposed as a way of overcoming the learning-rate sensitivity of stochastic gradient descent in the particular field of non-negative matrix factorisation. In fact, NN-PA is a special case of PACO in which $\Omega = \mathbb{R}^n_+$ and the loss function is given by the $\epsilon$-insensitive loss function, which is the loss used in the original PA framework of \citet{crammer06}.
+
+
+\section{Problem Formulation}
+
+Having already laid out the key building blocks and ideas behind our problem formulation in Section~\ref{sec:intro}, the purpose of the present section is to fill in any gaps and make that exposition more precise where needed. Some repetition is expected but is kept to a minimum.
+
+%A dynamic OCO problem consists of a convex set $\Omega \subseteq \mathbb{R}^n$ and an a priori unknown sequence $\{f_t(\cdot)\}_{t \geq 1} \subset \mathcal{F}$, where $\mathcal{F}$ represents a class of sequences of convex loss functions from $\Omega$ onto $\mathbb{R}$. At any stage $t$, the decision maker selects a point $\mathbf{w}_t \in \Omega$, and then observes some feedback $\phi_t$. As we mentioned earlier, we shall confine ourselves to the full-information, subgradient and bandit feedback structures, in which $\phi_t = f_t$, $\phi_t = \mathbf{g}_t \in \partial f_t(\mathbf{w}_t)$ and $\phi_t = f_t(\mathbf{w}_t)$, respectively, for each step $t$.
+\begin{mccorrection}
+A dynamic OCO problem consists of a convex set $\Omega \subseteq \mathbb{R}^n$ and an a priori unknown sequence $\{f_t(\cdot)\}_{t \geq 1} \subset \mathcal{F}$, where $\mathcal{F}$ represents a class of sequences of convex loss functions from $\Omega$ onto $\mathbb{R}$. At any stage $t$, the decision maker selects a point $\mathbf{w}_t \in \Omega$, and then observes some feedback $\phi_t$. As we mentioned earlier, we shall confine ourselves to the full-information, gradient and bandit feedback structures, in which $\phi_t = f_t$, $\phi_t = \mathbf{g}_t \equiv \nabla f_t(\mathbf{w}_t)$ and $\phi_t = f_t(\mathbf{w}_t)$, respectively, for each step $t$.
+\end{mccorrection}
+
+The efficacy of an algorithm --- that is, a strategy for choosing a sequence of decisions $\mathbf{w}_t \in \Omega$ --- is measured relative to a fictitious clairvoyant who knows the function sequence $\{f_t(\cdot)\}_{t \geq 1}$ in advance, and therefore is able to select, on each round $t$, a point $\mathbf{w}_t^*$ such that $\mathbf{w}_t^* \in \argmin_{\mathbf{w} \in \Omega} \, f_t(\mathbf{w})$. The goal of the learner is to mimic the behaviour of the clairvoyant as closely as possible, that is to say, to find an algorithm whose efficacy is as similar as possible to that of the algorithm the clairvoyant would deploy. This corresponds to playing the strategy with the lowest possible dynamic regret, as defined in Eq. \eqref{eq:dynamic-regret}. Ideally, therefore, the learner would like to play the minimiser $\mathbf{w}_t^*$ of $f_t(\cdot)$ at each time step $t$, since this strategy would yield zero dynamic regret. This is not possible, however, so a surrogate function must be used in place of $f_t(\cdot)$. Loosely speaking, it would make sense to approximate the unobserved $f_t(\cdot)$ with the most recent loss function $f_{t-1}(\cdot)$ whenever the minimum of the latter is sufficiently close to that of the former:
+\begin{equation}
+\label{eq:oco-val-fct-approx}
+	\min_{\mathbf{w}\in\Omega} \; f_{t-1}(\mathbf{w})
+	\, \approx \, \min_{\mathbf{w}\in\Omega} \; f_t(\mathbf{w}).
+\end{equation}
+
+To ascertain the conditions under which the approximation in Eq. \eqref{eq:oco-val-fct-approx} is valid, consider the change in the minimal loss from time step $t-1$ to time step $t$, which is defined by
+\begin{equation}
+\label{eq:minimal-loss-delta}
+	\Delta f_t^*
+	\equiv \min_{\mathbf{w}\in\Omega} \; f_t(\mathbf{w}) - \min_{\mathbf{w}\in\Omega} \; f_{t-1}(\mathbf{w}),
+	\qquad t = 2, 3, \ldots, T.
+\end{equation}
+Using the standard properties of infima and suprema, we can write
+\begin{equation}
+\label{eq:minimal-loss-delta-prop}
+	|\Delta f_t^*|
+	\leq \max_{\mathbf{w}\in\Omega} \; |f_t(\mathbf{w}) - f_{t-1}(\mathbf{w})|,
+	\qquad t = 2, 3, \ldots, T.
+\end{equation}
+Summing both sides over $t$, we obtain
+\begin{equation}
+\label{eq:variation-functional-constraint}
+	\sum_{t=2}^{T} |\Delta f_t^*|
+	\leq \mathrm{Var}(f_1, \ldots, f_T)
+	\equiv \sum_{t=2}^{T} \max_{\mathbf{w}\in\Omega} \; |f_t(\mathbf{w}) - f_{t-1}(\mathbf{w})|.
+\end{equation}
+%where the variation functional $\mathrm{Var}(\cdot)$ is defined as
+%\begin{equation}
+%	\mathrm{Var}(f_1, \ldots, f_T) \equiv \sum_{t=1}^{T-1} \max_{\mathbf{w}\in\Omega} \; |f_{t+1}(\mathbf{w}) - f_t(\mathbf{w})|.
+%\end{equation}
+Roughly speaking, the variation functional $\mathrm{Var}(\cdot)$ measures the extent to which functions can change from one time step to the next, and adds this up over the horizon $T$.
+By virtue of Eq. \eqref{eq:variation-functional-constraint}, Eq. \eqref{eq:oco-val-fct-approx} is satisfied when the variation functional is bounded above, that is to say when there exists a scalar $V_T$ such that
+\begin{equation}
+	\mathrm{Var}(f_1, \ldots, f_T) \leq V_T.
+\end{equation}
+We refer to $V_T$ as the \emph{variation budget} over $\mathcal{F}$. Note that this quantity is allowed to depend on the length of the horizon, and therefore measures the variation scale relative to the latter. In light of all the aforementioned considerations, we shall further constrain the set of admissible loss-function sequences as follows.
+\begin{assumption}
+\label{ass:functional-variation}
+The sequence of loss functions $f_{1:T}$ belong to the \emph{temporal uncertainty set} $\mathcal{V}$, defined by
+\begin{equation}
+\label{eq:temporal-uncertainty-set}
+	\mathcal{V}
+	\equiv \Big\{f_{1:T} \subset \mathcal{F} \; \Big| \; \sum_{t=1}^{T-1} \max_{\mathbf{w}\in\Omega} \; |f_{t+1}(\mathbf{w}) - f_t(\mathbf{w})| \leq V_T\Big\},
+\end{equation}
+where $\{V_t\}_{t=1, 2, \ldots}$ is a non-decreasing sequence of scalars such that $V_t \leq t$ for all $t$, with $V_1 = 0$ and $V_2 \geq 1$ for normalisation purposes.
+\end{assumption}
+\begin{mccorrection}
+It is worthwhile noting that the sequence $\{V_t\}_{t=1, 2, \ldots}$ is allowed to grow linearly. While this may seem odd at first, \citep[Proposition~1]{besbes15} shows that if the variation budget is \emph{linear} in $T$, then, as one may expect, it is \emph{impossible} to achieve sublinear dynamic regret. Conversely, if $V_T$ is \emph{sublinear} in $T$, then algorithms that achieve sublinear dynamic regret \emph{do exist}. With that in mind, hereon, we will focus on the case in which the variation budget is sublinear in $T$.
+\end{mccorrection}
+Even though the variation budget places some restrictions on the possible evolution of loss functions, it still allows for many different temporal patterns, including continuous change, discrete shocks and a non-constant rate of change (see \citep{besbes15} for examples and illustrations of such variation instances). More importantly for our purposes, these restrictions justify the following action choices:
+\begin{equation}
+\label{eq:action-choices}
+	\mathbf{w}_{t+1} \in \argmin_{\mathbf{w}\in\Omega}\; f_t(\mathbf{w}), \qquad t = 1, 2, \ldots,
+\end{equation}
+with an arbitrary initial action $\mathbf{w}_1\in\Omega$.
+
+Before discussing how to implement strategy \eqref{eq:action-choices} within the different feedback structures considered in this chapter, it is worth emphasising the implications of the temporal uncertainty set \eqref{eq:temporal-uncertainty-set} for dynamic regret.
+
+\subsection{Temporal variation and dynamic regret}
+
+In addition to allowing the learner to mimic the clairvoyant strategy in a fairly accurate way, the temporal uncertainty set ensures the existence of algorithms with sublinear dynamic regret rates. This is the primary reason why it was introduced in \citep{besbes15}.
+
+Indeed, in the absence of restrictions on the variation in the adversary's choices, it would not be possible to achieve sublinear dynamic regret, because drastic fluctuations would render the problem intractable. For instance, \citet{besbes15} proved that if there is no restriction on the variation of loss functions, then the dynamic regret is linear in $T$, regardless of the strategy adopted by the learner. Let us illustrate this with a contrived example.
+\begin{example}
+Suppose that for $t \in [T]$, after the learner has picked an action $w_t \in \mathbb{R}$, the adversary randomly chooses the loss function among $f_t(w) = (w - 1)^2$ and $f_t(w) = (w + 1)^2$. The expected instantaneous regret for round $t$ in this example satisfies
+\begin{equation}
+\begin{split}
+	\mathbb{E}[f_t(w_t) - f_t(w_t^*)]
+	&= \frac{1}{2}\left[(w_t - 1)^2 - \min_{w}\, (w - 1)^2\right] + \frac{1}{2}\left[(w _t + 1)^2 - \min_{w}\, (w + 1)^2\right]
+	\\	
+	&= \frac{1}{2}(w_t - 1)^2 + \frac{1}{2}(w_t + 1)^2	
+	= w_t^2 + 1
+	\geq 1,
+\end{split}
+\end{equation}
+whence $\mathbb{E}(\emph{\textbf{Reg}}_T^d) = \sum_{t=1}^T (w_t^2 + 1) \geq T$.
+\end{example}
+
+
+\section{Full Information}
+
+In this section, we assume that on each round, the entire loss function is available to the learner after she makes her decision. Specifically, at each stage $t$, the sequence of events is as follows:
+\begin{enumerate}
+	\item the learner submits an action $\mathbf{w}_t \in \Omega$;
+	\item the adversary chooses a loss function $f_t(\cdot)$ and reveals it to the learner;
+	\item the learner incurs a (known) loss of $f_t(\mathbf{w}_t)$.
+\end{enumerate}
+As discussed in the previous section, the optimal strategy for the learner is to start with an arbitrary choice $\mathbf{w}_1 \in \Omega$, followed by choices $\mathbf{w}_{t+1}$ ($t \geq 1$) such that
+\begin{equation}
+\label{eq:action-choices-2}
+	\mathbf{w}_{t+1} \in \argmin_{\mathbf{w} \in \Omega} \, f_t(\mathbf{w}).
+\end{equation}
+In the best case scenario, we are able to analytically solve the optimisation problem in Eq. \eqref{eq:action-choices-2}. In this case, it is relatively straightforward to show that the dynamic regret associated with the action choices in Eq. \eqref{eq:action-choices-2} has an upper bound on the order of the variation in the sequence of loss functions. This is formally stated in Proposition~\ref{prop:action-choices-dynamic-regret}.
+\begin{mccorrection}
+\begin{proposition}
+\label{prop:action-choices-dynamic-regret}
+Under the conditions set out in Assumption~\ref{ass:functional-variation}, with the exception that $V_t < t$ (rather than $V_t \leq t$) for all $t$, the action sequence
+\begin{equation}
+	\mathbf{w}_{t+1} \in \argmin_{\mathbf{w}\in\Omega}\; f_t(\mathbf{w}), \qquad t \in [T-1],
+\end{equation}
+with $\mathbf{w}_1$ being an arbitrary element of $\Omega$, achieves the following dynamic regret bound:
+\begin{equation}
+	\sum_{t=1}^T f_t(\mathbf{w}_t) - \sum_{t=1}^T f_t(\mathbf{w}_t^*) \leq [f_1(\mathbf{w}_1) - f_1(\mathbf{w}_1^*)] + 2V_T.
+\end{equation}
+\end{proposition}
+\end{mccorrection}
+\begin{proof}
+For each $t \in [T-1]$ and each $\mathbf{w}_t^* \in \argmin_{\mathbf{w}\in\Omega}\; f_t(\mathbf{w})$, we can write
+\begin{align}
+	f_{t+1}(\mathbf{w}_{t+1}) - f_{t+1}(\mathbf{w}_{t+1}^*)
+	&= f_{t+1}(\mathbf{w}_t^*) - f_{t+1}(\mathbf{w}_{t+1}^*)
+	\nonumber \\
+	&= [f_{t+1}(\mathbf{w}_t^*) - f_t(\mathbf{w}_t^*)] + [f_t(\mathbf{w}_t^*) - f_{t+1}(\mathbf{w}_{t+1}^*)]
+	\nonumber \\	
+	&\leq |f_{t+1}(\mathbf{w}_t^*) - f_t(\mathbf{w}_t^*)| + |\Delta f_{t+1}^*|
+	\nonumber \\
+	&\leq |f_{t+1}(\mathbf{w}_t^*) - f_t(\mathbf{w}_t^*)| + \max_{\mathbf{w}\in\Omega} \; |f_{t+1}(\mathbf{w}) - f_t(\mathbf{w})|,
+	\label{eq:action-choices-dynamic-regret-proof-1}
+\end{align}
+where we have used the definition \eqref{eq:minimal-loss-delta} in the first inequality, while the second inequality is a direct consequence of property \eqref{eq:minimal-loss-delta-prop}.
+
+By definition, the following inequality holds for any $\mathbf{w}\in\Omega$:
+\begin{equation}
+	|f_{t+1}(\mathbf{w}) - f_t(\mathbf{w})|
+	\leq \max_{\mathbf{w}\in\Omega} \; |f_{t+1}(\mathbf{w}) - f_t(\mathbf{w})|.
+\end{equation}
+Setting $\mathbf{w} = \mathbf{w}_t^*$ and plugging the resulting inequality into Eq. \eqref{eq:action-choices-dynamic-regret-proof-1} yields
+\begin{equation}
+	f_{t+1}(\mathbf{w}_{t+1}) - f_{t+1}(\mathbf{w}_{t+1}^*) \leq 2\max_{\mathbf{w}\in\Omega} \; |f_{t+1}(\mathbf{w}) - f_t(\mathbf{w})|.
+\end{equation}
+Summing both sides over $t$ and using Assumption~\ref{ass:functional-variation}, we obtain
+\begin{equation}
+	\sum_{t=1}^{T-1}[f_{t+1}(\mathbf{w}_{t+1}) - f_{t+1}(\mathbf{w}_{t+1}^*)]
+	\leq 2\sum_{t=1}^{T-1}\max_{\mathbf{w}\in\Omega} \; |f_{t+1}(\mathbf{w}) - f_t(\mathbf{w})|
+	\leq 2V_T.
+\end{equation}
+It immediately follows that
+\begin{equation}
+\begin{split}
+	\sum_{t=1}^{T}[f_t(\mathbf{w}_t) - f_t(\mathbf{w}_t^*)]
+%	&= [f_1(\mathbf{w}_1) - f_1(\mathbf{w}_1^*)]
+%	+ \sum_{t=2}^{T}[f_t(\mathbf{w}_t) - f_t(\mathbf{w}_t^*)]
+%	\\
+	&= [f_1(\mathbf{w}_1) - f_1(\mathbf{w}_1^*)]
+	+ \sum_{t=1}^{T-1}[f_{t+1}(\mathbf{w}_{t+1}) - f_{t+1}(\mathbf{w}_{t+1}^*)]
+	\\
+	&\leq [f_1(\mathbf{w}_1) - f_1(\mathbf{w}_1^*)]
+	+ 2V_T,
+\end{split}
+\end{equation}
+which completes the proof.
+\end{proof}
+
+%In most cases, however, the optima in Eq. \eqref{eq:action-choices-2} cannot be found by algebraic means alone, and numerical techniques are required. While there are numerous such techniques that proceed iteratively towards the optimum, including line-search, trust-region, conjugate-gradients and quasi-Newton methods, we shall only discuss gradient/subgradient descent here, as it forms the basis for all of the algorithms that we shall develop in this chapter. For a detailed discussion of alternative methods, we refer the reader to \citep{nocedal}.
+\begin{mccorrection}
+In most cases, however, the optima in Eq. \eqref{eq:action-choices-2} cannot be found by algebraic means alone, and numerical techniques are required. While there are numerous such techniques that proceed iteratively towards the optimum, including line-search, trust-region, conjugate-gradients and quasi-Newton methods, we shall only discuss gradient descent here, as it forms the basis for all of the algorithms that we shall develop in this chapter. For a detailed discussion of alternative methods, we refer the reader to \citep{nocedal}.
+\end{mccorrection}
+
+%\subsection{Subgradient descent}
+\subsection{Gradient descent}
+
+%Subgradient descent is the simplest and oldest of optimisation methods. It is an \emph{iterative} procedure in the sense that it proceeds in iterations, each seeking to decrease the value of the objective function. The method is based on the following principle: locally, if we are at a point $\mathbf{v}_{t}^{(k)} \in \Omega$, we can decrease $f_t(\cdot)$ by taking a step in the direction $-\mathbf{g}_t^{(k)}$, where $\mathbf{g}_t^{(k)}$ is a subgradient of $f_t(\cdot)$ evaluated at $\mathbf{v}_{t}^{(k)}$, i.e.\ $\mathbf{g}_t^{(k)} \in \partial f_t(\mathbf{v}_{t}^{(k)})$. Mathematically, this idea is expressed by means of the update rule
+%\begin{equation}
+%	\mathbf{v}_{t}^{(k+1)}
+%	= \Pi_{\Omega}(\mathbf{v}_{t}^{(k)} - \eta\mathbf{g}_t^{(k)}),
+%	\qquad k \in [K],
+%\end{equation}
+%for some fixed learning rate $\eta > 0$ and an integer $K \geq 1$ representing the number of iterations until convergence is achieved.
+\begin{mccorrection}
+Gradient descent is the simplest and oldest of optimisation methods. It is an \emph{iterative} procedure in the sense that it proceeds in iterations, each seeking to decrease the value of the objective function. The method is based on the following principle: locally, if we are at a point $\mathbf{v}_{t}^{(k)} \in \Omega$, we can decrease $f_t(\cdot)$ by taking a step in the direction $-\mathbf{g}_t^{(k)}$, where $\mathbf{g}_t^{(k)}$ is the gradient of $f_t(\cdot)$ evaluated at $\mathbf{v}_{t}^{(k)}$, i.e.\ $\mathbf{g}_t^{(k)} \equiv \nabla f_t(\mathbf{v}_{t}^{(k)})$. Mathematically, this idea is expressed by means of the update rule
+\begin{equation}
+	\mathbf{v}_{t}^{(k+1)}
+	= \Pi_{\Omega}(\mathbf{v}_{t}^{(k)} - \eta\mathbf{g}_t^{(k)}),
+	\qquad k \in [K],
+\end{equation}
+for some fixed learning rate $\eta > 0$ and an integer $K \geq 1$ representing the number of iterations until convergence is achieved.
+\end{mccorrection}
+
+%To see why subgradient descent works, assume $\Omega = \mathbb{R}^n$ and apply Taylor's theorem to expand $f_t(\mathbf{v}_{t}^{(k+1)})$ around $\mathbf{v}_{t}^{(k)}$, which for small $\eta$ yields
+%\begin{equation}
+%	f_t(\mathbf{v}_{t}^{(k+1)})
+%	= f_t(\mathbf{v}_{t}^{(k)} - \eta\mathbf{g}_t^{(k)})
+%	\approx f_t(\mathbf{v}_{t}^{(k)}) - \underbrace{\eta\Vert\mathbf{g}_t^{(k)}\Vert_2^2}_{> \, 0}
+%	< f_t(\mathbf{v}_{t}^{(k)}),
+%\end{equation}
+%meaning the value of $f_t(\cdot)$ has decreased by moving from the old iterate $\mathbf{v}_{t}^{(k)}$ to the new one $\mathbf{v}_{t}^{(k+1)}$. If $\eta$ is non-infinitesimal, it is always possible that we will overshoot the true minimum. Making $\eta$ very small guards against this, but means that the optimisation process will take a very long time to reach a minimum.
+\begin{mccorrection}
+To see why gradient descent works, assume $\Omega = \mathbb{R}^n$ and apply Taylor's theorem to expand $f_t(\mathbf{v}_{t}^{(k+1)})$ around $\mathbf{v}_{t}^{(k)}$, which for small $\eta$ yields
+\begin{equation}
+	f_t(\mathbf{v}_{t}^{(k+1)})
+	= f_t(\mathbf{v}_{t}^{(k)} - \eta\mathbf{g}_t^{(k)})
+	\approx f_t(\mathbf{v}_{t}^{(k)}) - \underbrace{\eta\Vert\mathbf{g}_t^{(k)}\Vert_2^2}_{> \, 0}
+	< f_t(\mathbf{v}_{t}^{(k)}),
+\end{equation}
+meaning the value of $f_t(\cdot)$ has decreased by moving from the old iterate $\mathbf{v}_{t}^{(k)}$ to the new one $\mathbf{v}_{t}^{(k+1)}$. If $\eta$ is non-infinitesimal, it is always possible that we will overshoot the true minimum. Making $\eta$ very small guards against this, but means that the optimisation process will take a very long time to reach a minimum.
+\end{mccorrection}
+
+%The subgradient descent algorithm adapted to the problem of dynamic OCO in a full-information setting is presented in Algorithm~\ref{alg:omgd}. It is worthwhile noting that the same algorithm has been independently proposed by \citet{zhang17}, under the name `online multiple gradient descent'. We refer the interested reader to the detailed regret analysis provided therein.
+\begin{mccorrection}
+The gradient descent algorithm adapted to the problem of dynamic OCO in a full-information setting is presented in Algorithm~\ref{alg:omgd}. It is worthwhile noting that the same algorithm has been independently proposed by \citet{zhang17}, under the name `online multiple gradient descent'. We refer the interested reader to the detailed regret analysis provided therein.
+\begin{algorithm}[H]
+%\caption{Subgradient Descent for Dynamic Online Convex Optimisation}
+\caption{Gradient Descent for Dynamic Online Convex Optimisation}
+\label{alg:omgd}
+\begin{algorithmic}[1]
+	\STATE {\bfseries Input:} convex action space $\Omega \subseteq \mathbb{R}^n$, learning rate $\eta > 0$, tolerance $\epsilon > 0$
+	\STATE {\bfseries Initialisation:} arbitrary initial action $\mathbf{w}_1 \in \Omega$, $k = 1$
+	\FOR{$t=1, 2, \ldots$}
+		\STATE play $\mathbf{w}_t$ and receive loss function $f_t : \Omega \rightarrow \mathbb{R}$
+		\STATE set $\mathbf{v}_t^{(1)} = \mathbf{w}_t$
+		\STATE {\bfseries repeat}
+			\begin{align*}
+				\mathbf{v}_t^{(k+1)}
+				&= \Pi_{\Omega}(\mathbf{v}_t^{(k)} - \eta\mathbf{g}_t^{(k)}),
+%				\qquad \mathbf{g}_t^{(k)} \in \partial f_t(\mathbf{v}_t^{(k)})
+				\qquad \mathbf{g}_t^{(k)} \equiv \nabla f_t(\mathbf{v}_t^{(k)})
+				\\
+				k &= k + 1
+			\end{align*}
+%		\STATE {\bfseries until} $\Vert f_t(\mathbf{v}_t^{(k+1)})\Vert_2^2 \leq \epsilon$
+		\STATE {\bfseries until} $|f_t(\mathbf{v}_t^{(k+1)})| \leq \epsilon$
+		\STATE obtain next action as $\mathbf{w}_{t+1} = \mathbf{v}_t^{(K)}$
+	\ENDFOR
+\end{algorithmic}
+\end{algorithm}
+Since the inner update rule in Algorithm~\ref{alg:omgd} has the form of \emph{offline} gradient descent, and in this chapter we only care about \emph{online} gradient descent, we will refrain from discussing Bayesian inference-based tools to automatically adjust the learning rate in Algorithm~\ref{alg:omgd}. In practice, one uses iteration-dependent learning rates $\eta_k$, chosen via line-search methods \citep{nocedal}.
+\end{mccorrection}
+%Since the inner update rule in Algorithm~\ref{alg:omgd} has the form of \emph{offline} subgradient descent, and in this chapter we only care about \emph{online} subgradient descent, we will refrain from discussing Bayesian inference-based tools to automatically adjust the learning rate in Algorithm~\ref{alg:omgd}. In practice, one uses iteration-dependent learning rates $\eta_k$, chosen via line-search methods \citep{nocedal}. 
+
+
+%\section{Subgradient Feedback}
+\section{Gradient Feedback}
+
+%Full information may not be available. In general, only some partial information about the loss functions $f_t(\cdot)$ is available. In this section, we assume that the subgradient value $\mathbf{g}_t \in \partial f_t(\mathbf{w}_t)$ is the only feedback that the adversary provides to the learner at each stage $t$ after the latter has submitted her choice. Because we cannot query the gradient of the loss function $f_t(\cdot)$ as many times as we would wish or need to, Algorithm~\ref{alg:omgd} is not applicable in this context.
+\begin{mccorrection}
+Full information may not be available. In general, only some partial information about the loss functions $f_t(\cdot)$ is available. In this section, we assume that the gradient value $\mathbf{g}_t \equiv \nabla f_t(\mathbf{w}_t)$ is the only feedback that the adversary provides to the learner at each stage $t$ after the latter has submitted her choice. Because we cannot query the gradient of the loss function $f_t(\cdot)$ as many times as we would wish or need to, Algorithm~\ref{alg:omgd} is not applicable in this context.
+
+%Previous work on dynamic OCO under subgradient feedback has popularised the OGD method, an online variant of standard gradient descent introduced in \citep{cesa-bianchi94} for prediction problems where the loss functions are convex Bregman divergences, and generalised in \citep{zinkevich03} to arbitrary convex functions and problems that may or may not involve prediction. As in the case of offline gradient descent, the learning rate has a significant impact on the performance of OGD, and hence tuning it has proved to be an arduous task. So far in the dynamic OCO literature, theoretical learning rate schedules have been applied, motivated by the assumption that the variation budget $V_T$ and/or certain parameters of the loss functions, such as smoothness or strong convexity constants, are known.
+Previous work on dynamic OCO under gradient feedback has popularised the OGD method, an online variant of standard gradient descent introduced in \citep{cesa-bianchi94} for prediction problems where the loss functions are convex Bregman divergences, and generalised in \citep{zinkevich03} to arbitrary convex functions and problems that may or may not involve prediction. As in the case of offline gradient descent, the learning rate has a significant impact on the performance of OGD, and hence tuning it has proved to be an arduous task. So far in the dynamic OCO literature, theoretical learning rate schedules have been applied, motivated by the assumption that the variation budget $V_T$ and/or certain parameters of the loss functions, such as smoothness or strong convexity constants, are known.
+
+%However, in practice, such parameters are unknown, causing existing dynamic OCO methods to be impracticable. It is therefore important to equip the OGD algorithm with a tuning mechanism that operates in an \emph{online} and \emph{data-driven} manner, so that no prior knowledge about $V_T$ or the smoothness/convexity constants of the loss functions is required. To this end, we provide in this section a Bayesian treatment of OGD allowing us to infer the optimal value of the learning rate from observed data, in this case the sequence $\mathbf{g}_{1:t}$ of subgradients. The resulting algorithm, which we shall refer to as \emph{maximum posterior gradient}, or MAPGRAD for short, prescribes a sequence $\eta_{1:t}$ of learning rates such that $\eta_t$ is the estimate of the learning rate associated with the maximum a posteriori estimate of the weights under their true posterior distribution at time step $t$.
+However, in practice, such parameters are unknown, causing existing dynamic OCO methods to be impracticable. It is therefore important to equip the OGD algorithm with a tuning mechanism that operates in an \emph{online} and \emph{data-driven} manner, so that no prior knowledge about $V_T$ or the smoothness/convexity constants of the loss functions is required. To this end, we provide in this section a Bayesian treatment of OGD allowing us to infer the optimal value of the learning rate from observed data, in this case the sequence $\mathbf{g}_{1:t}$ of gradients. The resulting algorithm, which we shall refer to as \emph{maximum posterior gradient}, or MAPGRAD for short, prescribes a sequence $\eta_{1:t}$ of learning rates such that $\eta_t$ is the estimate of the learning rate associated with the maximum a posteriori estimate of the weights under their true posterior distribution at time step $t$.
+\end{mccorrection}
+
+In order to develop a Bayesian treatment of the OGD method, we first need to interpret it from a probabilistic perspective, which in turn requires understanding which criterion it implicitly optimises. This is the purpose of the next subsection.
+
+\subsection{The objective function in online gradient descent}
+\label{sec:ogd-criterion}
+
+Recall that under Assumption~\ref{ass:functional-variation}, the goal of the learner for round $(t+1)$ in a dynamic OCO scenario is to pick an action $\mathbf{w}_{t+1}$ such that
+\begin{equation}
+	\mathbf{w}_{t+1} \in \argmin_{\mathbf{w} \in \Omega} \; f_t(\mathbf{w}).
+\end{equation}
+Since in the feedback structure considered here the learner does not observe the loss function $f_t(\cdot)$, she needs to consider a surrogate loss function which we denote by $\widehat{f}_t(\cdot)$. In Proposition~\ref{prop:ogd-regpb}, we show that the surrogate loss
+\begin{equation}
+	\widehat{f}_t(\mathbf{w})
+	\equiv f_t(\mathbf{w}_t) + \mathbf{g}_t\cdot(\mathbf{w}-\mathbf{w}_t) + \frac{1}{2\eta}\Vert\mathbf{w}-\mathbf{w}_t\Vert_2^2
+\end{equation}
+induces the OGD update
+\begin{equation}
+\label{eq:ogd}
+	\mathbf{w}_{t+1}
+	= \Pi_{\Omega}(\mathbf{w}_t - \eta\mathbf{g}_t),
+%	= \argmin_{\mathbf{w} \in \Omega} \; \Vert\mathbf{w} - (\mathbf{w}_t - \eta\mathbf{g}_t)\Vert_2,
+	\qquad t = 1, 2, \ldots,
+\end{equation}
+with $\mathbf{w}_1$ being arbitrarily chosen from $\Omega$, and where $\eta > 0$ is the learning rate and $\Pi_{\Omega}$ denotes the Euclidean projection\footnote{We defer the discussion of Euclidean projections to Section~\ref{sec:euclidean-projections}, wherein we also cover how to evaluate them for a relatively wide variety of sets.} onto the nearest point in the set $\Omega$, i.e.\
+\begin{equation}
+\label{eq:euclidean-projection-definition}
+	\Pi_{\Omega}(\mathbf{v})
+	\equiv \argmin_{\mathbf{w} \in \Omega} \; \Vert\mathbf{w} - \mathbf{v}\Vert_2.
+\end{equation}
+This means that the OGD update can be interpreted as minimising a first-order Taylor approximation of the loss function $f_t(\cdot)$ around the current action $\mathbf{w}_t$, added to a proximal term $\Vert\mathbf{w}-\mathbf{w}_t\Vert_2^2/(2\eta)$.
+\begin{proposition}
+\label{prop:ogd-regpb}
+Consider the update in Eq. \eqref{eq:ogd}. Given the iterate $\mathbf{w}_t$, the instantaneous gradient $\mathbf{g}_t = \nabla f_t(\mathbf{w}_t)$ and the positive constant $\eta$, the proximal operator\footnote{We refer the reader to \citep{proximal} for further details on proximal operators.}
+  \begin{equation}
+  \label{eq:ogd-regpb}
+    \widetilde{\mathbf{w}}_{t+1} \equiv \argmin_{\mathbf{w} \in \Omega} \; \left\{f_t(\mathbf{w}_t) + \mathbf{g}_t \cdot (\mathbf{w} - \mathbf{w}_t) + \frac{1}{2\eta}\Vert\mathbf{w} - \mathbf{w}_t\Vert_2^2\right\}
+  \end{equation}
+  is equivalent to the iterate $\mathbf{w}_{t+1}$ generated by Eq. \eqref{eq:ogd}, for each integer $t \geq 1$.
+\end{proposition}
+\begin{proof}
+We prove the above statement by contradiction.
+Suppose that $\widetilde{\mathbf{w}}_{t+1} \neq \mathbf{w}_{t+1}$.% Based on the definition of the update in Eq. \eqref{eq:ogd}, we can write
+\begin{mccorrection}
+Combining Eq. \eqref{eq:ogd} and Definition \eqref{eq:euclidean-projection-definition}, we obtain
+\begin{equation}
+	\mathbf{w}_{t+1}
+	= \argmin_{\mathbf{w} \in \Omega} \; \Vert\mathbf{w} - (\mathbf{w}_t - \eta\mathbf{g}_t)\Vert_2.
+\end{equation}
+Thus, by construction, $\mathbf{w}_{t+1}$ is the smallest such $\mathbf{w}$ in $\Omega$ or, in mathematical terms,
+\begin{equation}
+\label{eq:ogd-regpb-proof-1}
+	\Vert\mathbf{w}_{t+1} - (\mathbf{w}_t - \eta\mathbf{g}_t)\Vert_2
+	\leq \Vert\mathbf{x} - (\mathbf{w}_t - \eta\mathbf{g}_t)\Vert_2,
+	\qquad \forall \, \mathbf{x} \in \Omega.
+\end{equation}
+\end{mccorrection}
+Since $\Omega$ is convex, the projection $\Pi_\Omega(\mathbf{w}_t - \eta\mathbf{g}_t)$ has a unique solution, which is $\mathbf{w}_{t+1}$. Therefore, by setting $\mathbf{x} = \widetilde{\mathbf{w}}_{t+1}$ in Eq. \eqref{eq:ogd-regpb-proof-1}, the inequality becomes strict, i.e.\
+\begin{equation}
+\label{eq:ogd-regpb-proof-2}
+	\Vert\mathbf{w}_{t+1} - (\mathbf{w}_t - \eta\mathbf{g}_t)\Vert_2
+	< \Vert\widetilde{\mathbf{w}}_{t+1} - (\mathbf{w}_t - \eta\mathbf{g}_t)\Vert_2.
+\end{equation}
+Taking the square of both sides, cancelling out common terms and then dividing both sides by $2\eta$ yields
+\begin{equation}
+\label{eq:ogd-regpb-proof-3}
+	\frac{1}{2\eta}\Vert\mathbf{w}_{t+1} - \mathbf{w}_t\Vert_2^2 + \mathbf{g}_t \cdot (\mathbf{w}_{t+1} - \mathbf{w}_t)
+	< \frac{1}{2\eta}\Vert\widetilde{\mathbf{w}}_{t+1} - \mathbf{w}_t\Vert_2^2 + \mathbf{g}_t \cdot (\widetilde{\mathbf{w}}_{t+1} - \mathbf{w}_t).
+\end{equation}
+
+On the other hand, the definition of $\widetilde{\mathbf{w}}_{t+1}$ in Eq. \eqref{eq:ogd-regpb} implies that
+\begin{equation}
+\label{eq:ogd-regpb-proof-4}
+	\frac{1}{2\eta}\Vert\widetilde{\mathbf{w}}_{t+1} - \mathbf{w}_t\Vert_2^2 + \mathbf{g}_t \cdot (\widetilde{\mathbf{w}}_{t+1} - \mathbf{w}_t)
+	\leq \frac{1}{2\eta}\Vert\mathbf{x} - \mathbf{w}_t\Vert_2^2 + \mathbf{g}_t \cdot (\mathbf{x} - \mathbf{w}_t), \quad \forall \, \mathbf{x} \in \Omega,
+\end{equation}
+where we have omitted the additive term $f_t(\mathbf{w}_t)$ because it appears on both sides of the inequality. Setting $\mathbf{x} = \mathbf{w}_{t+1}$ in Eq. \eqref{eq:ogd-regpb-proof-4}, we obtain
+\begin{equation}
+\label{eq:ogd-regpb-proof-5}
+	\frac{1}{2\eta}\Vert\widetilde{\mathbf{w}}_{t+1} - \mathbf{w}_t\Vert_2^2 + \mathbf{g}_t \cdot (\widetilde{\mathbf{w}}_{t+1} - \mathbf{w}_t)
+	< \frac{1}{2\eta}\Vert\mathbf{w}_{t+1} - \mathbf{w}_t\Vert_2^2 + \mathbf{g}_t \cdot (\mathbf{w}_{t+1} - \mathbf{w}_t),
+\end{equation}
+which clearly contradicts Eq. \eqref{eq:ogd-regpb-proof-3}.
+
+Consequently, our initial premise that $\widetilde{\mathbf{w}}_{t+1} \neq \mathbf{w}_{t+1}$ cannot be true, which means that the OGD update in Eq. \eqref{eq:ogd} coincides with that from Eq. \eqref{eq:ogd-regpb}.
+\end{proof}
+In what follows, we give careful consideration to the choice of the learning rate $\eta$ from a Bayesian standpoint. To this end, we first present a novel probabilistic interpretation of OGD based on its implicit criterion, i.e. the optimisation problem in Eq. \eqref{eq:ogd-regpb}. An additional advantage of this interpretation is that it can be used to cheaply compute uncertainty estimates of the learner's actions.
+
+\subsection{Probabilistic interpretation of online gradient descent}
+\label{sec:probabilistic-ogd}
+
+We saw in Proposition~\ref{prop:ogd-regpb} that OGD implicitly solves the problem
+\begin{equation}
+\label{eq:ogd-criterion}
+	\min_{\mathbf{w} \in \Omega} \; \left\{f_t(\mathbf{w}_t) + \mathbf{g}_t \cdot (\mathbf{w} - \mathbf{w}_t) + \frac{1}{2\eta}\Vert\mathbf{w} - \mathbf{w}_t\Vert_2^2\right\},
+	\qquad t = 1, 2, \ldots
+\end{equation}
+This problem can be equivalently formulated as
+\begin{align}
+\label{eq:ogd-optpb-proba-form}
+	& \min_{\mathbf{w} \in \mathbb{R}^n} \; \left\{f_t(\mathbf{w}_t) + \mathbf{g}_t \cdot (\mathbf{w} - \mathbf{w}_t) + \frac{1}{2\eta}\Vert\mathbf{w} - \mathbf{w}_t\Vert_2^2 + \iota_{\Omega}(\mathbf{w})\right\}
+	\nonumber \\
+	&= \max_{\mathbf{w} \in \mathbb{R}^n} \; \left\{-f_t(\mathbf{w}_t) - \mathbf{g}_t \cdot (\mathbf{w} - \mathbf{w}_t) - \frac{1}{2\eta}\Vert\mathbf{w} - \mathbf{w}_t\Vert_2^2 - \iota_{\Omega}(\mathbf{w})\right\}
+	\nonumber \\
+	&= \max_{\mathbf{w} \in \mathbb{R}^n} \; \log\left[\exp\left\{-f_t(\mathbf{w}_t) - \mathbf{g}_t \cdot (\mathbf{w} - \mathbf{w}_t) - \frac{1}{2\eta}\Vert\mathbf{w} - \mathbf{w}_t\Vert_2^2 - \iota_{\Omega}(\mathbf{w})\right\}\right],
+\end{align}
+where $\iota_{\mathcal{C}}(x)$ denotes the set indicator function, taking the value $0$ if $x \in \mathcal{C}$ and $+\infty$ otherwise.
+This formulation highlights the fact that the OGD update in Eq. \eqref{eq:ogd} coincides with the \emph{maximum a posteriori} (MAP) estimate of $\mathbf{w}$ under the posterior distribution $p(\mathbf{w}|\mathcal{D}_t, \mathbf{w}_t, \eta)$ defined by
+\begin{equation}
+\label{eq:ogd-unnormalised-posterior}
+	p(\mathbf{w}|\mathcal{D}_t, \mathbf{w}_t, \eta)
+	\propto \exp\left\{-f_t(\mathbf{w}_t) - \mathbf{g}_t \cdot (\mathbf{w} - \mathbf{w}_t) - \frac{1}{2\eta}\Vert\mathbf{w} - \mathbf{w}_t\Vert_2^2 - \iota_{\Omega}(\mathbf{w})\right\},
+\end{equation}
+where $\mathcal{D}_t$ is the $t$-th example implicit in the observed gradient value $\mathbf{g}_t$\footnote{For instance, if $f_t(\cdot)$ is the square loss function, i.e.\ $f_t(\mathbf{w}) = (y_t - \mathbf{w}\cdot\mathbf{x}_t)^2$, where $\mathbf{x}_t$ and $y_t$ are the input vector and output at time $t$, respectively, then we have $\mathcal{D}_t = (\mathbf{x}_t, y_t)$.}.
+Simple manipulation involving completing the square with respect to $\mathbf{w}$ in the exponent gives us
+\begin{align}
+\label{eq:ogd-criterion-square-completion}
+	& -f_t(\mathbf{w}_t) - \mathbf{g}_t \cdot (\mathbf{w} - \mathbf{w}_t) - \frac{1}{2\eta}\Vert\mathbf{w} - \mathbf{w}_t\Vert_2^2 - \iota_{\Omega}(\mathbf{w})
+	\nonumber \\	
+	&= \left[\frac{\eta}{2}\Vert\mathbf{g}_t\Vert_2^2 - f_t(\mathbf{w}_t)\right]
+	- \frac{1}{2\eta}\Vert\mathbf{w} - (\mathbf{w}_t - \eta\mathbf{g}_t)\Vert_2^2 - \iota_{\Omega}(\mathbf{w}).
+\end{align}
+Taking the exponential of the right-hand side, back-substituting it into Eq. \eqref{eq:ogd-unnormalised-posterior} and normalising the resulting quantity, we obtain
+\begin{align}
+\label{eq:ogd-posterior}
+	& p(\mathbf{w}|\mathcal{D}_t, \mathbf{w}_t, \eta)
+	= \frac{\bcancel{\exp\left\{\frac{\eta}{2}\Vert\mathbf{g}_t\Vert_2^2 - f_t(\mathbf{w}_t)\right\}}\exp\left\{-\frac{1}{2\eta}\Vert\mathbf{w} - (\mathbf{w}_t - \eta\mathbf{g}_t)\Vert_2^2 - \iota_{\Omega}(\mathbf{w})\right\}}
+	{\bcancel{\exp\left\{\frac{\eta}{2}\Vert\mathbf{g}_t\Vert_2^2 - f_t(\mathbf{w}_t)\right\}}\int\exp\left\{-\frac{1}{2\eta}\Vert\mathbf{w} - (\mathbf{w}_t - \eta\mathbf{g}_t)\Vert_2^2 - \iota_{\Omega}(\mathbf{w})\right\} \, \mathrm{d}\mathbf{w}}
+	\nonumber \\
+	&= \frac{\mathcal{N}(\mathbf{w}|\mathbf{w}_t - \eta\mathbf{g}_t,\, \eta\mathbf{I}_n)\mathds{1}_{\Omega}(\mathbf{w})}{\int\mathcal{N}(\mathbf{w}|\mathbf{w}_t - \eta\mathbf{g}_t,\, \eta\mathbf{I}_n)\mathds{1}_{\Omega}(\mathbf{w}) \, \mathrm{d}\mathbf{w}},
+\end{align}
+where $\mathds{1}_{\mathcal{C}}(x) \equiv \exp\{-\iota_{\mathcal{C}}(x)\}$ is the characteristic function of the set $\mathcal{C}$.
+We recognise this as a \emph{truncated Gaussian distribution} over $\Omega$, which we shall denote by
+\begin{equation}
+\label{eq:ogd-posterior-final}
+	p(\mathbf{w}|\mathcal{D}_t, \mathbf{w}_t, \eta)
+	= \mathcal{N}_{\Omega}(\mathbf{w}|\mathbf{w}_t - \eta\mathbf{g}_t,\, \eta\mathbf{I}_n)
+	\equiv \frac{\mathcal{N}(\mathbf{w}|\mathbf{w}_t - \eta\mathbf{g}_t,\, \eta\mathbf{I}_n)\mathds{1}_{\Omega}(\mathbf{w})}{\int\mathcal{N}(\mathbf{w}|\mathbf{w}_t - \eta\mathbf{g}_t,\, \eta\mathbf{I}_n)\mathds{1}_{\Omega}(\mathbf{w}) \, \mathrm{d}\mathbf{w}}.
+\end{equation}
+
+We have thus established that the OGD update \eqref{eq:ogd} coincides with the most probable value of $\mathbf{w}$ given the current weights $\mathbf{w}_t$ and datum $\mathcal{D}_t$, in other words the maximiser of the logarithm of Eq. \eqref{eq:ogd-posterior-final}. To complete the specification of the probabilistic model behind OGD, we need to understand which likelihood function and prior distribution induce the posterior \eqref{eq:ogd-posterior-final}.
+
+\subsubsection{Likelihood and prior}
+
+Casting a frequentist into a MAP framework is achieved by taking a Bayesian decision-theoretic approach in which the loss function is based on the log likelihood of the data and the penalty is associated with a prior distribution over the parameters of interest. For example, in the LASSO algorithm \citep{tibshirani96}, the least-squares loss function is associated with a Gaussian likelihood (whose log is equal, up to a constant of proportionality, to the least-squares loss), while there exists duality between the $\ell_1$ penalty and the Laplace prior.
+
+Following a similar line of reasoning, we may deduce that the likelihood corresponding to OGD is such that
+\begin{equation}
+	f_t(\mathbf{w}) = -\log p(\mathcal{D}_t|\mathbf{w})
+\end{equation}
+or, equivalently,
+\begin{equation}
+\label{eq:ogd-pseudo-likelihood}
+	p(\mathcal{D}_t|\mathbf{w})
+	= \exp\Big\{-f_t(\mathbf{w})\Big\}.
+\end{equation}
+Technically speaking, this quantity is a \emph{pseudo}-likelihood because it is unnormalised with respect to $\mathcal{D}_t$. We work with this rather than with its normalised counterpart because it leads to the traditional OGD update (i.e.\ Eq. \eqref{eq:ogd}), noting that the same approach has been previously adopted in Bayesian treatments of other frequentist algorithms, such as the support vector machine \citep{polson&scott, henao14}.
+
+As for the prior distribution $p(\mathbf{w}|\eta)$, by inspection of Eq. \eqref{eq:ogd-optpb-proba-form} after setting $t = 1$, it becomes apparent that
+\begin{equation}
+	p(\mathbf{w}|\eta)
+	\propto \exp\Big\{-\frac{1}{2\eta}\Vert\mathbf{w}-\mathbf{w}_1\Vert_2^2 - \iota_{\Omega}(\mathbf{w})\Big\},
+\end{equation}
+which we recognise as the unnormalised density of a truncated Gaussian distribution of the form
+\begin{equation}
+\label{eq:ogd-prior}
+	p(\mathbf{w}|\eta)
+	= \mathcal{N}_{\Omega}(\mathbf{w}|\mathbf{w}_1,\, \eta\mathbf{I}_n).
+\end{equation}
+
+\subsubsection{Online gradient descent as approximate inference}
+
+It is important to note that Eq. \eqref{eq:ogd-posterior-final} is an \emph{approximate, parametric} posterior since it is not conditioned on the entire old data set $\mathcal{D}_{1:t}$, as is the case for the true posterior $p(\mathbf{w}|\mathcal{D}_{1:t}, \eta)$. Given the nature of the probabilistic model induced by OGD, this true posterior cannot be evaluated analytically, as we shall demonstrate in a moment. We shall further see that OGD bypasses this intractability by linearising the loss function around the current weight vector, which gives rise to the truncated Gaussian approximation from Eq. \eqref{eq:ogd-posterior-final}.
+
+In the context of sequential inference, the recursive formulation of Bayes' rule states that the posterior distribution at any stage acts as the prior distribution for the subsequent data point. Using our notation, this is expressed by
+\begin{equation}
+\label{eq:odg-streaming-bayes-rule}
+	p(\mathbf{w}|\mathcal{D}_{1:t}, \eta)
+%	= \frac{p(\mathcal{D}_{t}|\mathbf{w})p(\mathbf{w}|\mathcal{D}_{1:t-1}, \eta)}{p(\mathcal{D}_{1:t}|\eta)},
+	= \frac{p(\mathcal{D}_{t}|\mathbf{w})p(\mathbf{w}|\mathcal{D}_{1:t-1}, \eta)}{\int p(\mathcal{D}_{t}|\mathbf{w})p(\mathbf{w}|\mathcal{D}_{1:t-1}, \eta) \, \mathrm{d}\mathbf{w}}.
+\end{equation}
+%where $p(\mathcal{D}_{1:t}|\eta)$ denotes the marginal pseudo-likelihood and is given by
+%\begin{equation}
+%\label{eq:odg-marginal-likelihood}
+%	p(\mathcal{D}_{1:t}|\eta)
+%	= \int p(\mathcal{D}_{t}|\mathbf{w})p(\mathbf{w}|\mathcal{D}_{1:t-1}, \eta) \, \mathrm{d}\mathbf{w}.
+%%	= \int \exp\Big\{-f_t(\mathbf{w})\Big\}p(\mathbf{w}|\mathcal{D}_{1:t-1}, \eta) \, \mathrm{d}\mathbf{w},
+%\end{equation}
+%where the second equality follows from Eq. \eqref{eq:ogd-pseudo-likelihood}.
+%In all but limited special cases, $p(\mathcal{D}_{1:t}|\eta)$ is intractable. To understand why, it is instructive to consider the case $t = 1$ in Eq. \eqref{eq:odg-marginal-likelihood}, in which the latter becomes
+%\begin{equation}
+%\label{eq:ogd-marginal-likelihood-t1-derivation}
+%	p(\mathcal{D}_1|\eta)
+%	= \int \exp\Big\{-f_1(\mathbf{w})\Big\}\,\mathcal{N}_{\Omega}(\mathbf{w}|\mathbf{w}_1,\, \eta\mathbf{I}_n) \, \mathrm{d}\mathbf{w}.
+%\end{equation}
+%Thus, unless $\exp\{-f_1(\mathbf{w})\}$ is a simple squared exponential, we cannot obtain a closed-form expression for this integral. This intractability also affects the posteriors at all subsequent stages $t > 1$, which occurs due to the iterative application of Eq. \eqref{eq:odg-streaming-bayes-rule}.
+Eq. \eqref{eq:odg-streaming-bayes-rule} does not have the form of an online algorithm because it requires knowledge of the \emph{entire old data set} $\mathcal{D}_{1:t-1}$. The basic idea, proposed by \citet{opper98}, to turn this into an online algorithm is to replace the true posterior $p(\mathbf{w}|\mathcal{D}, \eta)$ by a simpler parametric distribution $p(\mathbf{w}|\boldsymbol{\theta}, \eta)$, where $\boldsymbol{\theta}$ is a set of parameters capturing a major part of the information about the previous data and having to be updated at each step. Using the old approximating posterior $p(\mathbf{w}|\boldsymbol{\theta}_t, \eta)$, we can perform an update of the form \eqref{eq:odg-streaming-bayes-rule} once the new data point $\mathcal{D}_t$ arrives, like so:
+\begin{equation}
+	\widetilde{p}(\mathbf{w}|\mathcal{D}_t, \boldsymbol{\theta}_t, \eta)
+	= \frac{p(\mathcal{D}_{t}|\mathbf{w})p(\mathbf{w}|\boldsymbol{\theta}_t, \eta)}
+	{\int p(\mathcal{D}_{t}|\mathbf{w})p(\mathbf{w}|\boldsymbol{\theta}_t, \eta) \, \mathrm{d}\mathbf{w}}.
+\end{equation}
+By inspection of the OGD criterion in Eq. \eqref{eq:ogd-optpb-proba-form}, we see that the approximating posterior employed by the algorithm takes the form
+\begin{equation}
+	p(\mathbf{w}|\boldsymbol{\theta}_t, \eta)
+%	= p(\mathbf{w}|\mathbf{w}_t, \eta)
+	\propto \exp\Big\{-\frac{1}{2\eta}\Vert\mathbf{w} - \mathbf{w}_t\Vert_2^2 - \iota_{\Omega}(\mathbf{w})\Big\},
+\end{equation}
+in other words $\boldsymbol{\theta}_t = \mathbf{w}_t$ and
+\begin{equation}
+	p(\mathbf{w}|\boldsymbol{\theta}_t, \eta)
+	= \mathcal{N}_{\Omega}(\mathbf{w}|\mathbf{w}_t,\, \eta\mathbf{I}_n).
+\end{equation}
+From this and Eq. \eqref{eq:ogd-pseudo-likelihood}, it follows that in the case of OGD, we have
+\begin{equation}
+\label{eq:ogd-approximate-posterior-derivation}
+	\widetilde{p}(\mathbf{w}|\mathcal{D}_t, \boldsymbol{\theta}_t, \eta)
+	= \frac{\exp\{-f_t(\mathbf{w})\}\mathcal{N}_{\Omega}(\mathbf{w}|\mathbf{w}_t,\, \eta\mathbf{I}_n)}{\int \exp\{-f_t(\mathbf{w})\}\mathcal{N}_{\Omega}(\mathbf{w}|\mathbf{w}_t,\, \eta\mathbf{I}_n) \, \mathrm{d}\mathbf{w}}.
+\end{equation}
+
+In all but limited special cases, the pseudo-likelihood contribution $\exp\{-f_t(\mathbf{w})\}$ is not a simple squared exponential, causing $\widetilde{p}(\mathbf{w}|\mathcal{D}_t, \boldsymbol{\theta}_t, \eta)$ to not belong to the parametric family $p(\mathbf{w}|\boldsymbol{\theta}, \eta)$. To address this issue, OGD linearises the loss function $f_t(\cdot)$ about the current weight estimates $\mathbf{w}_t$ using a first-order Taylor series expansion, i.e.\
+\begin{equation}
+	f_t(\mathbf{w})
+	\approx f_t(\mathbf{w}_t) + \mathbf{g}_t \cdot (\mathbf{w}-\mathbf{w}_t),
+	\qquad t = 1, 2, \ldots
+\end{equation}
+Applying this expansion to the numerator in Eq. \eqref{eq:ogd-approximate-posterior-derivation}, along with the definition of the truncated Gaussian and the square-completion result from Eq. \eqref{eq:ogd-criterion-square-completion}, the latter can be approximated as
+\begin{align}
+	& \exp\Big\{-f_t(\mathbf{w})\Big\}\mathcal{N}_{\Omega}(\mathbf{w}|\mathbf{w}_t,\, \eta\mathbf{I}_n)
+	\approx \exp\Big\{-f_t(\mathbf{w}_t) - \mathbf{g}_t \cdot (\mathbf{w}-\mathbf{w}_t)\Big\}\,\mathcal{N}_{\Omega}(\mathbf{w}|\mathbf{w}_t,\, \eta\mathbf{I}_n)
+	\nonumber \\
+	&= \exp\Big\{-f_t(\mathbf{w}_t) - \mathbf{g}_t \cdot (\mathbf{w}-\mathbf{w}_t)\Big\}\,
+	\frac{\mathcal{N}(\mathbf{w}|\mathbf{w}_t,\, \eta\mathbf{I}_n)\mathds{1}_{\Omega}(\mathbf{w})}{\int \mathcal{N}(\mathbf{w}|\mathbf{w}_t,\, \eta\mathbf{I}_n)\mathds{1}_{\Omega}(\mathbf{w})\, \mathrm{d}\mathbf{w}}
+	\nonumber \\
+	&= \left[\int \mathcal{N}(\mathbf{w}|\mathbf{w}_t,\, \eta\mathbf{I}_n)\mathds{1}_{\Omega}(\mathbf{w}) \, \mathrm{d}\mathbf{w}\right]^{-1}
+	\exp\Big\{\frac{\eta}{2}\Vert\mathbf{g}_t\Vert_2^2 - f_t(\mathbf{w}_t)\Big\}
+	\mathcal{N}(\mathbf{w}|\mathbf{w}_t - \eta\mathbf{g}_t,\, \eta\mathbf{I}_n)\mathds{1}_{\Omega}(\mathbf{w}).
+\end{align}
+Plugging this result back into Eq. \eqref{eq:ogd-approximate-posterior-derivation}, we then have
+\begin{align}
+	& \widetilde{p}(\mathbf{w}|\mathcal{D}_t, \boldsymbol{\theta}_t, \eta)
+	\nonumber \\
+	&\approx \frac{\bcancel{\left[\int \mathcal{N}(\mathbf{w}|\mathbf{w}_t,\, \eta\mathbf{I}_n)\mathds{1}_{\Omega}(\mathbf{w}) \, \mathrm{d}\mathbf{w}\right]^{-1}
+	\exp\Big\{\frac{\eta}{2}\Vert\mathbf{g}_t\Vert_2^2 - f_t(\mathbf{w}_t)\Big\}}
+	\mathcal{N}(\mathbf{w}|\mathbf{w}_t - \eta\mathbf{g}_t,\, \eta\mathbf{I}_n)\mathds{1}_{\Omega}(\mathbf{w})}{\bcancel{\left[\int \mathcal{N}(\mathbf{w}|\mathbf{w}_t,\, \eta\mathbf{I}_n)\mathds{1}_{\Omega}(\mathbf{w}) \, \mathrm{d}\mathbf{w}\right]^{-1}
+	\exp\Big\{\frac{\eta}{2}\Vert\mathbf{g}_t\Vert_2^2 - f_t(\mathbf{w}_t)\Big\}}
+	\int \mathcal{N}(\mathbf{w}|\mathbf{w}_t - \eta\mathbf{g}_t,\, \eta\mathbf{I}_n)\mathds{1}_{\Omega}(\mathbf{w})\, \mathrm{d}\mathbf{w}}
+	\nonumber \\
+	&= \mathcal{N}_{\Omega}(\mathbf{w}|\mathbf{w}_t - \eta\mathbf{g}_t,\, \eta\mathbf{I}_n)
+	\nonumber \\
+	&= p(\mathbf{w}|\mathcal{D}_t, \mathbf{w}_t, \eta),
+\end{align}
+and so we recover the approximate posterior \eqref{eq:ogd-posterior-final} implicitly maximised by OGD.
+
+\subsection{Inference of the learning rate}
+\label{sec:learning-rate-inference}
+
+Now that we have seen how OGD can be used as an approximate inference algorithm, we proceed to discussing how to infer the learning rate $\eta$ (or $\alpha \equiv \eta^{-1}$ for convenience) from the data set. Since we are not interested in the value of this hyperparameter per se, effectively a \emph{nuisance variable}, the proper Bayesian approach is to \emph{marginalise}\footnote{The process of marginalisation refers to `integrating out' uncertainty. For example, given $p(x, \theta) = p(x|\theta)p(\theta)$, we may obtain $p(x)$ by marginalising over the unknown parameter $\theta$, such that $p(x) = \int p(x|\theta)p(\theta) \, \mathrm{d}\theta$.} it in order to perform inference. This justifies the application of the MAP method\footnote{which stands for \emph{maximum a posteriori}; this use of the term `MAP' may not coincide precisely with its general usage.} as described in, for example, \citep{mackay96}. In this method, the true posterior distribution of the weights is found by marginalising the hyperparameter $\alpha$. The true posterior is then maximised with respect to the weight parameters. Integrating over a nuisance parameter is very much like estimating this parameter from the data \citep{bretthorst88, box-tiao73}.
+
+\subsubsection{The MAP method}
+
+The MAP method starts by integrating out $\alpha$ to obtain the marginal, or what might be considered the `true', prior over the weights:
+\begin{equation}
+\label{eq:true-weight-prior}
+	p(\mathbf{w})
+	= \int p(\mathbf{w}|\alpha)p(\alpha)\, \mathrm{d}\alpha.
+\end{equation}
+We can then write down the true posterior directly (except for its normalising constant):
+\begin{equation}
+	p(\mathbf{w}|\mathcal{D}_{1:t})
+	\propto p(\mathcal{D}_{1:t}|\mathbf{w})p(\mathbf{w}).
+\end{equation}
+This posterior can be maximised to find the (hyperparameter-free) MAP weight vector for round $(t+1)$, which we shall denote by $\mathbf{w}_{t+1}^\text{MP}$.
+
+It will prove convenient to show that $\mathbf{w}_{t+1}^\text{MP}$ is also a maximum of the conditional posterior $p(\mathbf{w}|\mathcal{D}_{1:t}, \alpha)$, with $\alpha$ set to its expected value $\langle\alpha\rangle_{p(\alpha|\mathbf{w}=\mathbf{w}_{t+1}^\text{MP})}$ under the conditional hyperparameter prior\footnote{As a reminder, $\langle x\rangle_{p(x)}$ denotes the expectation of the random variable $x$ taken with respect to the distribution $p(x)$.}
+\begin{equation}
+\label{eq:conditional-hyperparameter-dist}
+	p(\alpha|\mathbf{w})
+	= \frac{p(\mathbf{w}|\alpha)p(\alpha)}{p(\mathbf{w})}.
+\end{equation}
+We begin by noting that the first-order optimality conditions (FOCs) for maximising $\log p(\mathbf{w}|\mathcal{D}_{1:t})$ with respect to $\mathbf{w}$ (which is tantamount to maximising $p(\mathbf{w}|\mathcal{D}_{1:t})$) require that the gradient of $\log p(\mathbf{w}|\mathcal{D}_{1:t})$, evaluated at the optimal point $\mathbf{w}_{t+1}^\text{MP}$, is equal to the zero vector, i.e.\
+\begin{equation}
+\label{eq:true-posterior-foc-1}
+	[\nabla_{\mathbf{w}} \log p(\mathcal{D}_{1:t}|\mathbf{w}) + \nabla_{\mathbf{w}} \log p(\mathbf{w})]\big|_{\mathbf{w}=\mathbf{w}_{t+1}^\text{MP}} = \mathbf{0}_{n\times 1}.
+\end{equation}
+Similarly, by virtue of Bayes' rule, the optimum of the conditional log-posterior must satisfy the following FOCs:
+\begin{equation}
+\label{eq:weight-posterior-foc}
+	\nabla_{\mathbf{w}}\log p(\mathcal{D}_{1:t}|\mathbf{w}) + \nabla_{\mathbf{w}}\log p(\mathbf{w}|\alpha) = \mathbf{0}_{n\times 1}.
+\end{equation}
+A comparison between Eqs. \eqref{eq:true-posterior-foc-1} and \eqref{eq:weight-posterior-foc} reveals that the maxima of the true posterior $p(\mathbf{w}|\mathcal{D}_{1:t})$ will coincide with those of the conditional posterior $p(\mathbf{w}|\mathcal{D}_{1:t}, \alpha)$ if the gradients of their respective log-priors coincide at $\mathbf{w} = \mathbf{w}_{t+1}^\text{MP}$, given $\alpha = \langle\alpha\rangle_{p(\alpha|\mathbf{w}=\mathbf{w}_{t+1}^\text{MP})}$. In other words, it suffices to prove that
+\begin{equation}
+	\nabla_{\mathbf{w}} \log p(\mathbf{w})\big|_{\mathbf{w}=\mathbf{w}_{t+1}^\text{MP}}
+	= \nabla_{\mathbf{w}}\log p(\mathbf{w}|\alpha = \langle\alpha\rangle_{p(\alpha|\mathbf{w})})\big|_{\mathbf{w}=\mathbf{w}_{t+1}^\text{MP}}.
+\end{equation}
+
+From Eq. \eqref{eq:ogd-prior}, we know that
+\begin{equation}
+\label{eq:conditional-weight-prior}
+	p(\mathbf{w}|\alpha)
+	= \mathcal{N}_{\Omega}(\mathbf{w}|\mathbf{w}_1, \, \alpha^{-1}\mathbf{I}_n)
+	= \frac{\mathcal{N}(\mathbf{w}|\mathbf{w}_1, \, \alpha^{-1}\mathbf{I}_n)\mathds{1}_{\Omega}(\mathbf{w})}
+	{\int \mathcal{N}(\mathbf{w}|\mathbf{w}_1, \, \alpha^{-1}\mathbf{I}_n)\mathds{1}_{\Omega}(\mathbf{w}) \, \mathrm{d}\mathbf{w}}.
+\end{equation}
+Ignoring all the terms that do not depend on $\mathbf{w}$, this allows us to write
+\begin{equation}
+\label{eq:conditional-weight-log-posterior-gradient}
+	\nabla_{\mathbf{w}}\log p(\mathbf{w}|\alpha = \langle\alpha\rangle_{p(\alpha|\mathbf{w})})\big|_{\mathbf{w}=\mathbf{w}_{t+1}^\text{MP}}
+	= -\langle\alpha\rangle_{p(\alpha|\mathbf{w}=\mathbf{w}_{t+1}^\text{MP})}(\mathbf{w}_{t+1}^\text{MP} - \mathbf{w}_1) - \nabla\iota_{\Omega}(\mathbf{w}_{t+1}^\text{MP}),
+\end{equation}
+where, as a reminder, $\iota_{\Omega}(\mathbf{w})$ is the set indicator function (which takes the value $0$ if $\mathbf{w} \in \Omega$ and $+\infty$ otherwise), and $\nabla\iota_{\Omega}(\mathbf{w}_{t+1}^\text{MP})$ denotes a subgradient thereof evaluated at $\mathbf{w}_{t+1}^\text{MP}$.
+It remains to derive $\nabla_{\mathbf{w}} \log p(\mathbf{w})|_{\mathbf{w}=\mathbf{w}_{t+1}^\text{MP}}$. Combining Eqs. \eqref{eq:true-weight-prior} and \eqref{eq:conditional-weight-prior}, and using Leibniz' integral rule, we obtain
+\begin{equation}
+\begin{split}
+	\nabla_{\mathbf{w}} \log p(\mathbf{w})
+	&= \frac{1}{p(\mathbf{w})}
+	\int [\nabla_{\mathbf{w}}\,\mathcal{N}_{\Omega}(\mathbf{w}|\mathbf{w}_1, \, \alpha^{-1}\mathbf{I}_n)]p(\alpha)\,\mathrm{d}\alpha
+	\\
+	&= \frac{1}{p(\mathbf{w})}
+	\int [-\alpha(\mathbf{w}-\mathbf{w}_1) - \nabla\iota_{\Omega}(\mathbf{w})]\,\mathcal{N}_{\Omega}(\mathbf{w}|\mathbf{w}_1, \, \alpha^{-1}\mathbf{I}_n)p(\alpha)\,\mathrm{d}\alpha
+	\\
+	&= \int [-\alpha(\mathbf{w}-\mathbf{w}_1) - \nabla\iota_{\Omega}(\mathbf{w})]\underbrace{\frac{p(\mathbf{w}|\alpha)p(\alpha)}{p(\mathbf{w})}}_{= \, p(\alpha|\mathbf{w})}\,\mathrm{d}\alpha
+	\\
+	&= -\langle\alpha\rangle_{p(\alpha|\mathbf{w})}(\mathbf{w}-\mathbf{w}_1) - \nabla\iota_{\Omega}(\mathbf{w}).
+\end{split}
+\end{equation}
+Setting $\mathbf{w} = \mathbf{w}_{t+1}^\text{MP}$ and comparing the resulting expression against Eq. \eqref{eq:conditional-weight-log-posterior-gradient} shows, as asserted, that $\mathbf{w}_{t+1}^\text{MP}$ is also a maximum of the conditional posterior $p(\mathbf{w}|\mathcal{D}_{1:t}, \alpha)$ for the particular value of $\alpha = \langle\alpha\rangle_{p(\alpha|\mathbf{w}=\mathbf{w}_{t+1}^\text{MP})}$.
+
+\subsubsection{Optimal learning rate}
+
+To be able to compute the optimal (inverse) learning rate, $\langle\alpha\rangle_{p(\alpha|\mathbf{w}=\mathbf{w}_{t+1}^\text{MP})}$, we must specify a hyperprior over $\alpha$. This quantity is an example of a \emph{scale} parameter, and a suitable prior thereover is a Gamma distribution (see, e.g., \citep{berger85}):
+\begin{equation}
+\label{eq:beta-hyperprior}
+	p(\alpha) = \mathcal{G}(\alpha|a,b)
+	\equiv \frac{b^{a}}{\Gamma(a)}\alpha^{a-1}\exp\big\{-b\alpha\big\},
+\end{equation}
+where $\Gamma(a) \equiv \int_{0}^{\infty} x^{a-1}\exp\left\{-x\right\}\mathrm{d}x$ is the gamma function. Under this hyperprior, the joint prior over $\mathbf{w}$ and $\alpha$ is given by
+\begin{equation}
+	p(\mathbf{w}, \alpha)
+	= p(\mathbf{w}|\alpha)p(\alpha)
+	= \mathcal{N}_{\Omega}(\mathbf{w}|\mathbf{w}_1, \, \alpha^{-1}\mathbf{I}_n)\,\mathcal{G}(\alpha|a,b).
+\end{equation}
+We can rearrange this equation so that it reads $p(\mathbf{w}, \alpha) = p(\alpha|\mathbf{w})p(\mathbf{w})$. Letting $\mathcal{Z}_{\mathbf{w}}(\alpha)$ be the normalising constant of $p(\mathbf{w}|\alpha)$, this gives
+\begin{align}
+	p(\mathbf{w}, \alpha)
+	&= \mathcal{Z}_{\mathbf{w}}^{-1}(\alpha)
+	(2\pi\alpha^{-1})^{-n/2}\exp\left\{-\frac{\alpha}{2}\Vert\mathbf{w}- \mathbf{w}_1\Vert_2^2\right\}\mathds{1}_{\Omega}(\mathbf{w})\frac{b^{a}}{\Gamma(a)}\alpha^{a-1}\exp\big\{-b\alpha\big\}
+	\nonumber \\
+	&= \mathcal{Z}_{\mathbf{w}}^{-1}(\alpha)\alpha^{a+n/2-1}\exp\left\{-\left(b + \frac{\Vert\mathbf{w}-\mathbf{w}_1\Vert_2^2}{2}\right)\alpha\right\}\frac{b^{a}}{(2\pi)^{n/2}\Gamma(a)}\mathds{1}_{\Omega}(\mathbf{w})
+	\nonumber \\
+	&= \mathcal{Z}_{\mathbf{w}}^{-1}(\alpha)\frac{\left(b + \frac{\Vert\mathbf{w}-\mathbf{w}_1\Vert_2^2}{2}\right)^{a+n/2}}{\Gamma(a+n/2)}\alpha^{a+n/2-1}\exp\left\{-\left(b + \frac{\Vert\mathbf{w}-\mathbf{w}_1\Vert_2^2}{2}\right)\alpha\right\}
+	\nonumber \\
+	& \quad \times \frac{b^{a}\Gamma(a+n/2)}{(2\pi)^{n/2}\Gamma(a)}\left(b + \frac{\Vert\mathbf{w}-\mathbf{w}_1\Vert_2^2}{2}\right)^{-\left(a+n/2\right)}\mathds{1}_{\Omega}(\mathbf{w}).
+\end{align}
+From this, we infer that
+\begin{align}
+	p(\alpha|\mathbf{w})
+	&\propto \mathcal{Z}_{\mathbf{w}}^{-1}(\alpha)\,\mathcal{G}\left(\alpha \, \bigg| \, a + \frac{n}{2},\;\, b + \frac{\Vert\mathbf{w}-\mathbf{w}_1\Vert_2^2}{2}\right)
+	\label{eq:conditional-alpha-prior} \\
+\intertext{and}
+	p(\mathbf{w})
+	&\propto \frac{b^{a}\Gamma(a+n/2)}{(2\pi)^{n/2}\Gamma(a)}\left(b + \frac{\Vert\mathbf{w}-\mathbf{w}_1\Vert_2^2}{2}\right)^{-\left(a+n/2\right)}\mathds{1}_{\Omega}(\mathbf{w}).
+\end{align}
+
+We are now forced to adopt some form of approximation, and do so by assuming no constraints on $\mathbf{w}$. In reality, there are constraints, namely $\mathbf{w} \in \Omega$, but if we can determine the optimal learning rate for unconstrained $\mathbf{w}$, we can offset this assumption by projecting the resulting unconstrained  weights onto the constraint surface $\Omega$, as is done in the OGD update \eqref{eq:ogd}. For the case of unconstrained weights, we have $\mathcal{Z}_{\mathbf{w}}(\alpha) \equiv 1$, and so based on Eq. \eqref{eq:conditional-alpha-prior},
+\begin{equation}
+\label{eq:beta-em-update}
+	\langle\alpha\rangle_{p(\alpha|\mathbf{w})}
+	= \frac{a + n/2}{b + \Vert\mathbf{w}-\mathbf{w}_1\Vert_2^2 / 2}
+	= \frac{n + 2a}{\Vert\mathbf{w}-\mathbf{w}_1\Vert_2^2 + 2b},
+\end{equation}
+which is reminiscent of an expectation-maximisation update.
+
+We would then proceed by repeatedly applying Eq. \eqref{eq:beta-em-update}, concurrent with the weight updates from Eq. \eqref{eq:ogd}, until some suitable convergence criteria have been satisfied. Instead, however, we slightly depart from Eq. \eqref{eq:ogd} by considering \emph{lazy} OGD updates, which leads to a closed-form solution for $\langle\alpha\rangle_{p(\alpha|\mathbf{w})}$ under a non-informative hyperprior, as we shall demonstrate below. This is of utmost practical importance in an online setting, as the iterative re-estimation of $\alpha$ might take longer to converge than the time interval between the arrival of data points.
+
+\subsubsection{Lazy updates} 
+
+If we pretend that there are no constraints on the weights, which is equivalent to assuming that $\Omega = \mathbb{R}^n$, the OGD update rule \eqref{eq:ogd} becomes
+\begin{equation}
+\label{eq:unprojected-lazy-ogd}
+	\mathbf{w}_{t+1}
+	= \mathbf{w}_t - \eta\mathbf{g}_t
+	= \mathbf{w}_1 - \eta\sum_{\tau=1}^{t} \mathbf{g}_\tau,
+\end{equation}
+where the second equality is obtained by induction. Now, to rectify the incorrectness of our assumption, we perform a projection of the above update rule onto $\Omega$, giving
+\begin{equation}
+\label{eq:lazy-ogd}
+	\mathbf{w}_{t+1}
+	= \Pi_{\Omega}\left(\mathbf{w}_1 - \eta\sum_{\tau=1}^{t} \mathbf{g}_\tau\right).
+\end{equation}
+%This is called a \emph{lazy} projection because we do not project the iterates $\mathbf{w}_t$ onto $\Omega$ at each stage (as in Eq. \eqref{eq:ogd}), but instead keep track of the running sum of loss subgradients and only project it at decision time. The corresponding algorithm is therefore known as \emph{online gradient descent with lazy projections} (see, e.g., \citep{shalev-shwartz11} for further details).
+\begin{mccorrection}
+This is called a \emph{lazy} projection because we do not project the iterates $\mathbf{w}_t$ onto $\Omega$ at each stage (as in Eq. \eqref{eq:ogd}), but instead keep track of the running sum of loss gradients and only project it at decision time. The corresponding algorithm is therefore known as \emph{online gradient descent with lazy projections} (see, e.g., \citep{shalev-shwartz11} for further details).
+\end{mccorrection}
+
+As we mentioned earlier, an interesting closed-form expression for the optimal learning rate arises when we consider lazy OGD updates together with a non-informative hyperprior over $\alpha$. Such a hyperprior is characterised by $a = b = 0$, and so from Eq. \eqref{eq:beta-em-update}, we have
+\begin{equation}
+\label{eq:beta-em-update-uninformative}
+	\langle\alpha\rangle_{p(\alpha|\mathbf{w} = \mathbf{w}_{t+1}^\text{MP})}
+	= \frac{n}{\Vert\mathbf{w}_{t+1}^\text{MP}-\mathbf{w}_1\Vert_2^2}.
+\end{equation}
+Plugging this expression into Eq. \eqref{eq:unprojected-lazy-ogd} yields
+\begin{equation}
+	\mathbf{w}_{t+1}^\text{MP}
+	= \mathbf{w}_1 - \frac{\Vert\mathbf{w}_{t+1}^\text{MP} - \mathbf{w}_1\Vert_2^2}{n}\sum_{\tau=1}^{t}\mathbf{g}_\tau.
+\end{equation}
+Subtracting $\mathbf{w}_1$ from both sides and taking the squared Euclidean norm of the resulting expressions, we obtain
+\begin{equation}
+\label{eq:mapgrad-update-rule-3}
+	\Vert\mathbf{w}_{t+1}^\text{MP} - \mathbf{w}_1\Vert_2^2
+	= \frac{\Vert\mathbf{w}_{t+1}^\text{MP}-\mathbf{w}_1\Vert_2^4}{n^2}\left\Vert\sum_{\tau=1}^t\mathbf{g}_\tau\right\Vert_2^2
+	\iff
+	\frac{\Vert\mathbf{w}_{t+1}^\text{MP} - \mathbf{w}_1\Vert_2^2}{n} = \frac{n}{\left\Vert\sum_{\tau=1}^t\mathbf{g}_\tau\right\Vert_2^2}
+\end{equation}
+so the optimal learning rate, in the MAP sense, is given by
+\begin{equation}
+\label{eq:mapgrad-learning-rate}
+	\eta_t^{\text{MP}}
+	\equiv \langle\alpha\rangle^{-1}_{p(\alpha|\mathbf{w}=\mathbf{w}_{t+1}^\text{MP})} 
+	= \frac{n}{\left\Vert\sum_{\tau=1}^t\mathbf{g}_\tau\right\Vert_2^2}.
+\end{equation}
+It is worthwhile noting that $\eta_t^{\text{MP}}$ bears some resemblance to the learning rate employed by the ADAGRAD algorithm of \citet{adagrad}, although these authors took a completely different and non-Bayesian approach.
+
+\subsection{Maximum posterior gradient}
+
+%The online, approximately Bayesian algorithm we propose for dynamic OCO under subgradient feedback, termed MAPGRAD and summarised in Algorithm~\ref{alg:mapgrad}, is a hyperparameter-free, two-step procedure for adapting both the learner's actions $\mathbf{w}$ and the learning rate $\eta$, after the presentation of each example.
+%\begin{algorithm}[H]
+%\caption{MAPGRAD: Maximum Posterior Gradient}
+%\label{alg:mapgrad}
+%\begin{algorithmic}[1]
+%	\STATE {\bfseries Input:} convex and closed action space $\Omega \subseteq \mathbb{R}^n$
+%	\STATE {\bfseries Initialisation:} arbitrary initial action $\mathbf{w}_1 \in \Omega$, initial subgradient sum $\mathbf{s}_0^g = \mathbf{0}_{n \times 1}$
+%	\FOR{$t=1, 2, \ldots$}
+%		\STATE play $\mathbf{w}_t$ and receive subgradient $\mathbf{g}_t \in \partial f_t(\mathbf{w}_t)$
+%		\STATE update the subgradient sum:
+%		\begin{equation*}
+%			\mathbf{s}_t^g
+%			= \mathbf{s}_{t-1}^g + \mathbf{g}_t
+%		\end{equation*}
+%		\STATE compute the learning rate:
+%			\begin{equation*}
+%				\eta_t
+%				= \frac{n}{\Vert\mathbf{s}_t^g\Vert_2^2}
+%			\end{equation*}		
+%		\STATE compute the next action:
+%			\begin{equation*}
+%				\mathbf{w}_{t+1}
+%				= \Pi_{\Omega}(\mathbf{w}_t - \eta_t\mathbf{g}_t)
+%			\end{equation*}
+%	\ENDFOR
+%\end{algorithmic}
+%\end{algorithm}
+\begin{mccorrection}
+The online, approximately Bayesian algorithm we propose for dynamic OCO under gradient feedback, termed MAPGRAD and summarised in Algorithm~\ref{alg:mapgrad}, is a hyperparameter-free, two-step procedure for adapting both the learner's actions $\mathbf{w}$ and the learning rate $\eta$, after the presentation of each example.
+\begin{algorithm}[H]
+\caption{MAPGRAD: Maximum Posterior Gradient}
+\label{alg:mapgrad}
+\begin{algorithmic}[1]
+	\STATE {\bfseries Input:} convex and closed action space $\Omega \subseteq \mathbb{R}^n$
+	\STATE {\bfseries Initialisation:} arbitrary initial action $\mathbf{w}_1 \in \Omega$, initial gradient sum $\mathbf{s}_0^g = \mathbf{0}_{n \times 1}$
+	\FOR{$t=1, 2, \ldots$}
+		\STATE play $\mathbf{w}_t$ and receive the gradient $\mathbf{g}_t \equiv \nabla f_t(\mathbf{w}_t)$
+		\STATE update the gradient sum:
+		\begin{equation*}
+			\mathbf{s}_t^g
+			= \mathbf{s}_{t-1}^g + \mathbf{g}_t
+		\end{equation*}
+		\STATE compute the learning rate:
+			\begin{equation*}
+				\eta_t
+				= \frac{n}{\Vert\mathbf{s}_t^g\Vert_2^2}
+			\end{equation*}		
+		\STATE compute the next action:
+			\begin{equation*}
+				\mathbf{w}_{t+1}
+				= \Pi_{\Omega}(\mathbf{w}_t - \eta_t\mathbf{g}_t)
+			\end{equation*}
+	\ENDFOR
+\end{algorithmic}
+\end{algorithm}
+\end{mccorrection}
+Note that Algorithm~\ref{alg:mapgrad} is based on the agile OGD update rule from Eq. \eqref{eq:ogd} rather than its lazy counterpart in Eq. \eqref{eq:lazy-ogd}. This is because we relied on Eq. \eqref{eq:lazy-ogd} only to be able to derive an analytical expression for the optimal learning rate, and thereby bypass the need for iterative re-estimation rules that in practice might take longer to converge than the time interval between consecutive data points.
+
+\subsection{Improving uncertainty estimates}
+
+%As well as providing a principled approach to tuning the learning rate in an online and data-driven manner, the MAPGRAD framework can also be used to quantify the uncertainty that surrounds the appropriate choice for the learner's actions $\mathbf{w}$.
+%By plugging the optimal learning rate \eqref{eq:mapgrad-learning-rate} into the OGD posterior \eqref{eq:ogd-posterior-final}, we see that in the case of $\Omega = \mathbb{R}^n$, this uncertainty is measured via an \emph{isotropic} covariance matrix conditioned on the subgradient sequence $\mathbf{g}_{1:t}$, of the form
+%\begin{equation}
+%\label{eq:mapgrad-uncertainty-estimate}
+%	\Sigma_t^\text{MP} = \frac{n}{\left\Vert\sum_{\tau=1}^t\mathbf{g}_\tau\right\Vert_2^2}\mathbf{I}_n.
+%\end{equation}
+\begin{mccorrection}
+As well as providing a principled approach to tuning the learning rate in an online and data-driven manner, the MAPGRAD framework can also be used to quantify the uncertainty that surrounds the appropriate choice for the learner's actions $\mathbf{w}$.
+By plugging the optimal learning rate \eqref{eq:mapgrad-learning-rate} into the OGD posterior \eqref{eq:ogd-posterior-final}, we see that in the case of $\Omega = \mathbb{R}^n$, this uncertainty is measured via an \emph{isotropic} covariance matrix conditioned on the gradient sequence $\mathbf{g}_{1:t}$, of the form
+\begin{equation}
+\label{eq:mapgrad-uncertainty-estimate}
+	\Sigma_t^\text{MP} = \frac{n}{\left\Vert\sum_{\tau=1}^t\mathbf{g}_\tau\right\Vert_2^2}\mathbf{I}_n.
+\end{equation}
+\end{mccorrection}
+The isotropic nature of this uncertainty estimate stems from the fact that the OGD algorithm approximates the Hessian of the loss functions $f_t(\cdot)$ as $\alpha\mathbf{I}_n$. Indeed, if we consider the second-order Taylor expansion of $f_t(\cdot)$ around $\mathbf{w}_t$, i.e.\
+\begin{equation}
+	f_t(\mathbf{w})
+	\approx f_t(\mathbf{w}_t) + \nabla f_t(\mathbf{w}_t)^\text{T}(\mathbf{w} - \mathbf{w}_t) + \frac{1}{2}(\mathbf{w} - \mathbf{w}_t)^\text{T}\nabla^2 f_t(\mathbf{w}_t)(\mathbf{w} - \mathbf{w}_t),
+\end{equation}
+and replace the terms $\nabla f_t(\mathbf{w}_t)$ and $\nabla^2 f_t(\mathbf{w}_t)$ with $\mathbf{g}_t$ and $\alpha\mathbf{I}_n$, respectively, we recover the OGD criterion \eqref{eq:ogd-criterion}.
+
+Although the uncertainty estimates in Eq. \eqref{eq:mapgrad-uncertainty-estimate} can be obtained at no computational overhead, we might expect them to perform poorly in practice, as they fail to account for the geometry of the loss functions. More accurate uncertainty estimates can be readily obtained from a Bayesian treatment of adaptive learning-rate methods equipped with better curvature estimates, such as ADAGRAD \citep{adagrad} and ADAM \citep{adam}. For instance, ADAGRAD approximates the Hessian via the square root of the cumulative outer product of subgradients, i.e.\
+\begin{equation}
+	\nabla^2 f_t(\mathbf{w}_t)
+	\approx \sum_{\tau=1}^t \mathbf{g}_\tau\mathbf{g}_\tau^\text{T}.
+\end{equation}
+The beauty of our framework is that it can be easily extended to account for uncertainty estimates of the above type. A more detailed discussion of such extensions is beyond the scope of this thesis, and the reader is referred to \citep{badam}.
+
+
+\section{Bandit Feedback}
+
+%So far in this chapter, we have assumed that either the entire loss function, or the subgradient thereof evaluated at the current action, is observed by the decision maker at each stage. For some applications, however, these assumptions will not be valid. Examples include the multi-armed bandit problem, dynamic pricing and Bayesian optimisation. To accommodate such exceptions, we turn now to the bandit feedback structure, in which the only feedback available to the learner is the actual incurred loss $f_t(\mathbf{w}_t)$, and she must choose a descent direction to follow based only on this minimal piece of information.
+\begin{mccorrection}
+So far in this chapter, we have assumed that either the entire loss function, or the gradient thereof evaluated at the current action, is observed by the decision maker at each stage. For some applications, however, these assumptions will not be valid. Examples include the multi-armed bandit problem, dynamic pricing and Bayesian optimisation. To accommodate such exceptions, we turn now to the bandit feedback structure, in which the only feedback available to the learner is the actual incurred loss $f_t(\mathbf{w}_t)$, and she must choose a descent direction to follow based only on this minimal piece of information.
+\end{mccorrection}
+
+The bandit setting has previously been studied in both the static and dynamic OCO literatures. The simplest, and historically earliest, application of the online gradient descent algorithm to this setting was the work of \citet{flaxman05}, in which the authors used point evaluations of convex functions to approximately estimate the unknown gradient. Later, \citet{agarwal10} extended the work of \citet{flaxman05} by considering a multipoint feedback structure, in which the learner can query each loss function at multiple points.
+
+In the context of dynamic OCO under bandit feedback, the OGD algorithm was used in \citep{yang16} and, more recently, in \citep{gao18}. However, in both these papers, the learning rates were chosen under the assumption that the variation budget $V_T$ is known to the player \emph{before} the game begins. From a practical standpoint, this is a very unrealistic assumption. To rectify this shortcoming, we introduce in this section a novel adaptive online learning-rate method for dynamic OCO in the bandit setting, built upon the generalised passive-aggressive (GPA) model developed in Section~\ref{sec:gpa}. We name the resulting algorithm PACO, which stands for \emph{passive-aggressive convex optimisation}.
+
+\subsection{A one-point gradient estimate}
+\label{sec:gradient-estimates}
+
+The first step in building an algorithm for bandit OCO is to estimate the unknown gradient at the current action, $\nabla f_t(\mathbf{w}_t)$. Although we cannot explicitly compute $\nabla f_t(\mathbf{w}_t)$, it is possible to find an \emph{observable} random vector $\widehat{\mathbf{g}}_t$ that satisfies
+\begin{equation}
+	\mathbb{E}(\widehat{\mathbf{g}}_t)
+	\approx \nabla f_t(\mathbf{w}_t).
+\end{equation}
+Thus, $\widehat{\mathbf{g}}_t$ can be seen as an estimator for the gradient.
+
+How can we find an appropriate $\widehat{\mathbf{g}}_t$? In the multi-armed bandit problem, this is achieved by means of the importance sampling technique within the Hedge algorithm \citep{shalev-shwartz11, adaboost}. However, in more general cases, importance sampling cannot be applied because there is a continuum of points to sample, and also because the value of a function at a given point (a scalar) carries no information about its gradient (a vector). Thus, it is important to incorporate some `directionality' that would allow us to generate a vector from a scalar. This is precisely the key idea behind the simultaneous stochastic approximation (SSA) method of \citet{spall97}, which estimates the gradient by artificially sampling the function not at the point of interest, but at a nearby, randomly chosen point.
+
+To illustrate this method, it is convenient to begin with the one-dimensional case, i.e.\ functions defined over the real line. Specifically, suppose that we seek to estimate the derivative of a function $f : \mathbb{R} \rightarrow \mathbb{R}$ at some target point $\hat{w}$ using a single evaluation thereof. By definition, this derivative can be approximated by the difference quotient
+\begin{equation}
+\label{eq:approx-derivative}
+	f^\prime(\hat{w})
+	\approx \frac{f(\hat{w} + \delta) - f(\hat{w} - \delta)}{2\delta},
+\end{equation}
+with the approximation becoming exact as $\delta \rightarrow 0^+$. Of course, this estimate requires two function evaluations (at $\hat{w} + \delta$ and $\hat{w} - \delta$), but it also suggests the following approach: simply make a uniform random draw from $\{\pm 1\}$ and sample $f(\cdot)$ at $\hat{w} \pm \delta$. Letting $u \in \{\pm 1\}$ denote the outcome of this draw, the difference quotient above can be rewritten as
+\begin{equation}
+	\frac{f(\hat{w} + \delta) - f(\hat{w} - \delta)}{2\delta}
+	= \frac{1}{\delta}\left[\frac{1}{2}f(\hat{w} + \delta) - \frac{1}{2}f(\hat{w} - \delta)\right]
+	= \frac{1}{\delta}\mathbb{E}[f(\hat{w} + \delta u)u],
+\end{equation}
+i.e.\ as the expectation of the random variable $f(\hat{w} + \delta u)u$. Thus, going back to Eq. \eqref{eq:approx-derivative}, we see that $f^\prime(\hat{w})$ can be approximated to $\mathcal{O}(\delta)$ by the single-shot estimator $\delta^{-1}f(\hat{w} + \delta u)u$.
+
+Extending this construction to functions defined on $\mathbb{R}^n$ gives rise to the estimator
+\begin{equation}
+\label{eq:gradient-estimate}
+	\frac{n}{\delta}f(\widehat{\mathbf{w}} + \delta \mathbf{u})\mathbf{u},
+\end{equation}
+where $\mathbf{u}$ is now drawn uniformly from the $n$-dimensional unit sphere centred at the origin, i.e.\ from
+\begin{equation}
+	\mathbb{S}^n
+	= \big\{\mathbf{x} \in \mathbb{R}^n \, \big| \, \Vert\mathbf{x}\Vert_2 = 1\big\},
+\end{equation}
+and the factor $n$ has been included for the purposes of dimensional scaling\footnote{Heuristically, the reason for this is that there are $n$ independent directions to sample, each with `probability' $1/n$. Formally, this is a consequence of Stokes' theorem, a fundamental result in differential geometry which is used to prove the validity of the gradient estimator \citep[Lemma~2.1.]{flaxman05}.}. As in the one-dimensional case, the bias of the estimator vanishes in the limit $\delta \rightarrow 0^+$. More precisely, for $\delta > 0$ and $K$-Lipschitz continuous functions $f(\cdot)$, we have
+\begin{equation}
+	\mathbb{E}_{\mathbf{u} \in \mathbb{S}^n}\left[\frac{n}{\delta}f(\widehat{\mathbf{w}} + \delta\mathbf{u})\mathbf{u}\right]
+	= \nabla f_{\delta}(\widehat{\mathbf{w}}),
+\end{equation}
+where $f_{\delta}(\cdot)$ is a $\delta$-smoothed approximation of $f(\cdot)$ such that $|f_{\delta}(\widehat{\mathbf{w}}) - f(\widehat{\mathbf{w}})| \leq K\delta$. Specifically,
+\begin{equation}
+\label{eq:delta-smoothed-loss}
+	f_{\delta}(\mathbf{w})
+	\equiv \mathbb{E}_{\mathbf{v} \in \mathbb{B}^n}[f(\mathbf{w} + \delta\mathbf{v})]
+\end{equation}
+is simply the average value of $f(\cdot)$ over $\mathbb{B}^n_\delta$, an $n$-dimensional ball of radius $\delta$ centred at the origin, that is
+\begin{equation}
+	\mathbb{B}^n_\delta
+	= \big\{\mathbf{x} \in \mathbb{R}^n \, \big| \, \Vert\mathbf{x}\Vert_2 \leq \delta\big\}.
+\end{equation} 
+In other words, the one-point estimator in Eq. \eqref{eq:gradient-estimate} provides a reasonable approximation to $\nabla f(\widehat{\mathbf{w}})$, up to a bias of at most $\mathcal{O}(\delta)$.
+
+The above is the cornerstone of the `gradient descent without a gradient' methodology proposed in \citep{flaxman05}. In particular, the main idea behind this method is to apply a projected gradient descent scheme to generate an online sequence of \emph{pivot points} $\widehat{\mathbf{w}}_t$. These variables are \emph{not} played by the decision maker, but they act as base points (`pivots') to select an action at each stage based on the perturbation model
+\begin{equation}
+\label{eq:paco-perturbation-model}
+	\mathbf{w}_t
+	= \widehat{\mathbf{w}}_t + \delta\mathbf{u}_t,
+\end{equation}
+where $\mathbf{u}_t$ is drawn i.i.d. from the unit sphere $\mathbb{S}^n$. In so doing, the learner can follow the zeroth-order technique outlined above to estimate the gradient of $f_t(\cdot)$ at $\widehat{\mathbf{w}}_t$ as
+\begin{equation}
+\label{eq:paco-gradient-estimate}
+	\widehat{\mathbf{g}}_t
+	= \frac{n}{\delta}f_t(\mathbf{w}_t)\mathbf{u}_t.
+\end{equation}
+Clearly, this is not an estimate of the loss gradient at the current action $\mathbf{w}_t$. However, since the distance between the pivot and the learner's chosen action is of order $\mathcal{O}(\delta)$, the difference is not too big: optimistically, it should be small enough to generate a reasonable descent step.
+
+\subsection{Passive-aggressive convex optimisation}
+
+In this section, we present our PACO algorithm. Like most bandit algorithms, PACO works by estimating the `missing information' and then passing on this estimate to a full-information algorithm. In this case, the `missing information' are the gradients $\nabla f_t(\mathbf{w}_t)$. The underlying full-information algorithm is the GPA algorithm we introduced in Section~\ref{sec:gpa} and shall briefly review below.
+
+Recall that the GPA algorithm is a generalisation of the online passive-aggressive (PA) framework of \citet{crammer06} to loss functions other than the $\epsilon$-insensitive loss. The algorithm initialises the weights at zero and computes subsequent weights according to
+\begin{equation}
+\label{eq:gpa-optimisation-problem}
+	\mathbf{w}_{t+1}
+	= \argmin_{\mathbf{w} \in \mathbb{R}^n} \; \frac{1}{2}\Vert\mathbf{w} - \mathbf{w}_t\Vert_2^2
+	\quad \text{s.t.} \quad \widetilde{f}_t^{(1)}(\mathbf{w}) \leq \epsilon,
+	\qquad t = 1, 2, \ldots,
+\end{equation}
+where $\widetilde{f}_t^{(1)}(\cdot)$ denotes the first-order Taylor approximation of the loss function $f_t(\cdot)$ around the contemporaneous action $\mathbf{w}_t$, i.e.\
+\begin{equation}
+	\widetilde{f}_t^{(1)}(\mathbf{w})
+	\equiv f_t(\mathbf{w}_t) + \mathbf{g}_t^{\text{T}}(\mathbf{w} - \mathbf{w}_t),
+	\qquad \mathbf{g}_t \in \partial f_t(\mathbf{w}_t).
+\end{equation}
+Because $\epsilon \geq 0$, GPA relies on the following assumption which will also be required for PACO.
+\begin{assumption}
+\label{ass:positive-loss-functions}
+The loss functions $f_t(\cdot)$ are always non-negative, i.e.\
+\begin{equation}
+	\mathrm{Range}(f_t)
+	= \mathbb{R}_{\geq 0}
+	\equiv \big\{x \in \mathbb{R} \, | \, x \geq 0\big\},
+	\qquad \forall \, t = 1, 2, \ldots
+\end{equation} 
+\end{assumption}
+Note that the optimisation problem in Eq. \eqref{eq:gpa-optimisation-problem} is an alternative formulation of the OGD criterion \eqref{eq:ogd-criterion}. By specifying an upper bound on the loss, GPA bypasses in a simple and elegant way the difficulty in attempting to find a suitable value for the learning rate. Certainly, the choice of the latter has been replaced with a choice of the insensitivity parameter $\epsilon$, but one may argue that it is more natural and intuitive for a practitioner to pinpoint her maximum-loss threshold rather than the more abstract learning rate.
+Another nice property of the GPA method is that it admits a unique closed-form solution which, as we have shown in Section~\ref{sec:gpa}, takes the form
+\begin{equation}
+\label{eq:gpa-solution}
+	\mathbf{w}_{t+1}
+	= \mathbf{w}_t - \frac{\max\{0,\, f_t(\mathbf{w}_t) - \epsilon\}}{\Vert\mathbf{g}_t\Vert_2^2}\mathbf{g}_t.
+\end{equation}
+
+%In essence, the PACO algorithm is just a variant of GPA in which the true subgradient $\mathbf{g}_t$ has to be replaced with an estimate $\widehat{\mathbf{g}}_t$ thereof, as the learner does not have access to the former quantity. So instead of using $\widetilde{f}_t^{(1)}(\cdot)$, PACO relies on the approximation
+\begin{mccorrection}
+In essence, the PACO algorithm is just a variant of GPA in which the true gradient $\mathbf{g}_t$ has to be replaced with an estimate $\widehat{\mathbf{g}}_t$ thereof, as the learner does not have access to the former quantity. So instead of using $\widetilde{f}_t^{(1)}(\cdot)$, PACO relies on the approximation
+\end{mccorrection}
+\begin{equation}
+	\widehat{f}_t^{(1)}(\mathbf{w})
+	\equiv f_t(\mathbf{w}_t) + \widehat{\mathbf{g}}_t^{\text{T}}(\mathbf{w} - \widehat{\mathbf{w}}_t),
+\end{equation}
+where $\widehat{\mathbf{g}}_t$ is given by Eq. \eqref{eq:paco-gradient-estimate} and $\widehat{\mathbf{w}}_t$ is a pivot point whose perturbation yields action $\mathbf{w}_t$ (see Eq. \eqref{eq:paco-perturbation-model}). At each stage $t$, the algorithm then solves
+\begin{equation}
+\label{eq:paco-optimisation-problem}
+	\min_{\mathbf{w} \in \Omega_{\delta}} \; \frac{1}{2}\Vert\mathbf{w} - \widehat{\mathbf{w}}_t\Vert_2^2
+	\qquad \text{s.t.} \qquad \widehat{f}_t^{(1)}(\mathbf{w}) \leq \epsilon,
+\end{equation}
+where the `$\delta$-shrunk' sub-region $\Omega_\delta$ is defined as
+\begin{equation}
+	 \Omega_\delta
+	 \equiv \big\{(1-\delta)\mathbf{w} \, \big| \, \mathbf{w} \in \Omega\big\},
+	 \qquad \delta \in (0, 1).
+\end{equation}
+The rationale for minimising over $\Omega_\delta$ instead of $\Omega$ is that the chosen action $\mathbf{w}_t = \widehat{\mathbf{w}}_t + \delta\mathbf{u}_t$ may lie outside the feasible region $\Omega$ if the pivot point $\widehat{\mathbf{w}}_t$ lies too close to the boundary of $\Omega$. One can keep $\widehat{\mathbf{w}}_t$ away from the boundary by projecting it onto the `$\delta$-shrunk' sub-region\footnote{For any $\mathbf{w} \in \Omega_\delta$ and any unit vector $\mathbf{u}$, it holds that $(\mathbf{w} + \delta\mathbf{u}) \in \Omega$ \citep[Observation~2]{flaxman05}.}. 
+This projection introduces an additional error of order $\mathcal{O}(\delta)$, but since all other estimation errors are of the same order, it does not affect PACO's qualitative behaviour.
+
+Like OGD, PACO solves its optimisation problem \eqref{eq:paco-optimisation-problem} in two steps, namely an update step whose solution is such that
+\begin{equation}
+	\widehat{\mathbf{v}}_{t+1}
+	= \argmin_{\mathbf{v} \in \mathbb{R}^n} \; \frac{1}{2}\Vert\mathbf{v} - \widehat{\mathbf{w}}_t\Vert_2^2
+	\qquad \text{s.t.} \qquad \widehat{f}_t^{(1)}(\mathbf{w}) \leq \epsilon,
+\end{equation}
+followed by a projection step yielding the corresponding pivot point:
+\begin{equation}
+	\widehat{\mathbf{w}}_{t+1}
+	= \argmin_{\mathbf{w} \in \Omega_\delta} \; \Vert\mathbf{w} - \widehat{\mathbf{v}}_{t+1}\Vert_2^2.
+\end{equation}
+By analogy with Eq. \eqref{eq:gpa-solution}, we have
+\begin{equation}
+	\widehat{\mathbf{v}}_{t+1}
+	= \widehat{\mathbf{w}}_t - \frac{\max\{0,\, f_t(\mathbf{w}_t) - \epsilon\}}{\Vert\widehat{\mathbf{g}}_t\Vert_2^2}\widehat{\mathbf{g}}_t,
+\end{equation}
+whence
+\begin{equation}
+\label{eq:paco-solution}
+	\widehat{\mathbf{w}}_{t+1}
+	= \Pi_{\Omega_\delta}\left[\widehat{\mathbf{w}}_t - \frac{\max\{0,\, f_t(\mathbf{w}_t) - \epsilon\}}{\Vert\widehat{\mathbf{g}}_t\Vert_2^2}\widehat{\mathbf{g}}_t\right].
+\end{equation}
+Note that we update the pivot points and not the selected actions, since the latter are updated via the perturbation model in Eq. \eqref{eq:paco-perturbation-model}.
+\begin{mccorrection}
+The entire procedure is detailed in Algorithm~\ref{alg:paco} which is subject to the additional condition set out below.
+\begin{assumption}
+\label{ass:bounded-decision-set}
+The decision set $\Omega$ contains the unit ball centred at the origin, i.e. $\mathbb{B}^n_1 \subseteq \Omega$.
+\end{assumption}
+%\begin{assumption}
+%\label{ass:lipschitz-loss-functions}
+%The loss functions $f_t(\cdot)$ are Lipschitz continuous over their domain $\Omega$, with constant $K < \infty$, i.e.\
+%\begin{equation}
+%	\Vert f_t(\mathbf{u}) - f_t(\mathbf{v}) \Vert_2
+%	\leq K\Vert \mathbf{u} - \mathbf{v} \Vert_2,
+%\end{equation}
+%for any $(\mathbf{u}, \mathbf{v}) \in \Omega^2$ and any $t = 1, 2, \ldots$
+%\end{assumption}
+%These are standard assumptions in the study of bandit OCO algorithms.
+This is a standard assumption in the study of bandit OCO algorithms. In case it does not hold, we can always map $\Omega$ to a lower-dimensional space.
+%In case Assumption~\ref{ass:bounded-decision-set} does not hold, we can always map $\Omega$ to a lower-dimensional space.
+%As for Assumption~\ref{ass:lipschitz-loss-functions}, it ensures that Eq. \eqref{eq:paco-gradient-estimate} provides an unbiased estimator for the gradient of the $\delta$-smoothed version of $f_t(\cdot)$ (see Eq. \eqref{eq:delta-smoothed-loss}).
+Technically, we must also assume that $\Omega$ is a closed set, so that the projection operation is well-defined. 
+\end{mccorrection}
+\begin{algorithm}[H]
+\caption{\textsc{Paco}: Passive-Aggressive Convex Optimisation}
+\label{alg:paco}
+\begin{algorithmic}[1]
+	\STATE {\bfseries Input:} convex and closed action space $\Omega \subseteq \mathbb{R}^n$ containing the unit ball $\mathbb{B}^n_1$, exploration parameter $\delta \in (0, 1)$, insensitivity parameter $\epsilon \geq 0$
+	\STATE {\bfseries Initialisation:} initial pivot point $\widehat{\mathbf{w}}_1 = \mathbf{0}_{n\times 1}$
+	\FOR{$t=1, 2, \ldots$}
+		\STATE draw $\mathbf{u}_t$ uniformly from $\mathbb{S}^n$
+		\STATE play $\mathbf{w}_t = \widehat{\mathbf{w}}_t + \delta\mathbf{u}_t$ and receive loss $f_t(\mathbf{w}_t) \geq 0$
+		\STATE estimate the gradient of the current action as
+		\begin{equation*}
+			\widehat{\mathbf{g}}_t
+			= \frac{n}{\delta}f_t(\mathbf{w}_t)\mathbf{u}_t
+		\end{equation*}	
+		\STATE update the pivots:
+			\begin{equation*}
+			\label{eq:paco-final-update-rule}
+				\widehat{\mathbf{w}}_{t+1}
+				= \Pi_{\Omega_\delta}\left[\widehat{\mathbf{w}}_t - \frac{\max\{0,\, f_t(\mathbf{w}_t) - \epsilon\}}{\Vert\widehat{\mathbf{g}}_t\Vert_2^2}\widehat{\mathbf{g}}_t\right],
+				\qquad \Omega_\delta \equiv \{(1-\delta)\mathbf{w} \, | \, \mathbf{w} \in \Omega\}
+			\end{equation*}
+	\ENDFOR
+\end{algorithmic}
+\end{algorithm}
+While Algorithm~\ref{alg:paco} still requires the specification of the exploration parameter $\delta$, it has removed one degree of freedom from bandit OCO algorithms based on the OGD method, namely the cumbersome task of choosing an appropriate learning rate. It is important to note that $\delta$ controls the bias-variance trade-off of the algorithm. When it is too large, the gradient estimator in Algorithm~\ref{alg:paco} will improve in terms of precision (inverse variance), but deteriorate in terms of accuracy. Conversely, for small $\delta$, the estimated gradient will be relatively unbiased, but immensely variable. When using Algorithm~\ref{alg:paco}, we will therefore have to carefully balance these two conflicting objectives. Previous work on dynamic OCO in the bandit setting suggests setting $\delta = \mathcal{O}(1/T)$ \citep{yang16, gao18}.
+
+
+\section{Application Domain}
+\label{sec:dynamic-oco-application-domain}
+
+The algorithms and methods presented in this chapter are expository in nature, but designed with a view to real-world applications. As we already mentioned, one clear application domain is in the area of online portfolio selection, to which the next chapter shall be entirely devoted. Other areas of application include but are not limited to the following:
+%
+%We end this chapter by giving an overview of the broad range of applications of the methods presented herein. These include but are not limited to the following:
+\begin{itemize}
+	\item sequential compressed sensing of a dynamic scene and tracking dynamic social networks \citep{hall&willett13};
+	\item dynamic texture analysis, solar flare detection, traffic surveillance, and tracking self-exciting point processes and network behaviour in the Enron email corpus \citep{hall&willett15};
+	\item switching zero-sum games with uncoupled dynamics \citep{jadbabaie15};
+	\item tracking of a time-varying parameter with unknown dynamics \citep{mokhtari16};
+	\item online statistical learning \citep{zhang17};
+	\item decentralised tracking of dynamic parameters \citep{shahrampour18}.
+\end{itemize}
+
+More generally, our proposed algorithms can be used for any type of problem whose \emph{offline} version can be posed as follows:
+\begin{equation}
+\label{eq:offline-centralised-optimisation}
+\begin{split}
+	& \minimise_{\mathbf{w}_1, \ldots, \mathbf{w}_T} \quad\; \sum_{t=1}^T f_t(\mathbf{w}_t)
+	\\
+	&\, \text{subject to} \quad \mathbf{w}_t \in \Omega,\; t \in [T],
+\end{split}
+\end{equation}
+where $\Omega$ is a convex compact set and $f_t : \Omega \rightarrow \mathbb{R}$ is a convex loss function. Clearly, these encompass any static OCO problem. %However, since the empirical focus of this thesis is on the application of Bayesian online learning techniques to portfolio management, we chose to only evaluate the efficacy of our methods in the context of online portfolio selection (OLPS), so the next chapter is entirely devoted to this area.
+Once we have cast the portfolio-choice problem in the form \eqref{eq:offline-centralised-optimisation}, we will be able to solve it in an \emph{online} manner, using the methods introduced in this chapter.

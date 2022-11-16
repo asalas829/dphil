@@ -1,0 +1,117 @@
+\chapter{Further Work}
+\label{ch:further-work}
+
+\minitoc
+
+It is interesting to consider how one may further extend the studies presented throughout the thesis, and this chapter seeks to lay the foundations for many future avenues of research.
+
+
+\section{Extending Passive-Aggressive Learning}
+
+Whilst the generalised passive-aggressive (GPA) framework of Chapter~\ref{ch:pa-extensions} is flexible by construction of the model and algorithms, there are some simple ways in which it can be enhanced. First of all, it is possible to augment the model by substituting the Mahalanobis for the Euclidean distance in the objective of Eq. \eqref{eq:gpa-optpb}, so as to explicitly account for the distribution of the data. A further extension of the model is possible by noting that it is formulated in terms of a deterministic point-estimation problem governed by a set of user-defined hyperparameters: the approach fails to capture model/prediction uncertainty and induces dependence on hyperparameter settings.
+
+\subsection{Bayesian Generalised Passive-Aggressive Learning}
+
+We propose a unified Bayesian approach that encompasses the suggested enhancements. Our starting point is the soft GPA criterion in Eq. \eqref{eq:gpa-optpb-I}, but without the loss expansion in the constraint and with the Mahalanobis instead of the Euclidean distance in the objective. By analogy with Eq. \eqref{eq:PA-I-optpb-altform}, this modified criterion can be rewritten as
+\begin{equation}
+\label{eq:modified-gpa-I-optpb}
+	\min_{\mathbf{w} \in \mathbb{R}^n} \;
+	\Big\{C\ell_{t}(\mathbf{w}) + \frac{1}{2}(\mathbf{w} - \mathbf{w}_t)^\text{T}\boldsymbol{\Sigma}_{t}^{-1}(\mathbf{w} - \mathbf{w}_t)\Big\},
+\end{equation}
+where $\boldsymbol{\Sigma}_{t}$ denotes the covariance matrix of the weight vector at round $t$.
+
+Solving \eqref{eq:modified-gpa-I-optpb} is equivalent to finding the mode of the pseudo-posterior distribution $p(\mathbf{w}|\mathcal{D}_t, \boldsymbol{\theta}_t, C)$ defined by
+\begin{equation}
+\begin{split}
+	p(\mathbf{w}|\mathcal{D}_t, \boldsymbol{\theta}_t, C) 
+	&\propto \exp\Big\{-C\ell_{t}(\mathbf{w}) - \frac{1}{2}(\mathbf{w} - \mathbf{w}_t)^\text{T}\boldsymbol{\Sigma}_{t}^{-1}(\mathbf{w} - \mathbf{w}_t)\Big\}
+	\\	
+	&\propto L_t(\mathbf{w}|C)p(\mathbf{w}|\boldsymbol{\theta}_t),
+\end{split}
+\end{equation}
+where $\mathcal{D}_t$ is the datum implicit in $\ell_t(\cdot)$, and $\boldsymbol{\theta}_t \equiv \{\mathbf{w}_t, \boldsymbol{\Sigma}_{t}\}$. The data-dependent factor is a pseudo-likelihood contribution given by
+\begin{equation}
+	L_t(\mathbf{w}|C) = \exp\Big\{-C\ell_{t}(\mathbf{w})\Big\},
+\end{equation}
+where the prefix `pseudo' refers to the fact that this quantity is un-normalised with respect to the observation $\mathcal{D}_t$, which also justifies our use of the name `pseudo-posterior'\footnote{In principle, one could work with an actual likelihood contribution if $L_t$ was replaced by its normalised value $\widetilde{L}_t$, but we work with $L_t$ instead because it leads to the traditional GPA weight estimates. This is common practice in the Bayesian treatment of other frequentist supervised-learning methods (see, e.g., \citep{polson&scott, deng16}).}.
+The second factor, which we recognise as a Gaussian of the form
+\begin{equation}
+	p(\mathbf{w}|\boldsymbol{\theta}_t)
+	= \mathcal{N}(\mathbf{w}|\mathbf{w}_t,\, \boldsymbol{\Sigma}_{t}),
+\end{equation}
+acts as an \emph{approximate posterior} replacing the true, but generally intractable and offline, posterior $p(\mathbf{w}|\mathcal{D}_{1:t})$. The parameter vector $\boldsymbol{\theta}_t$ can be thought of as a `summary statistic' for past observations, and needs to be updated at each step to incorporate new information.
+%This paradigm was originally proposed in \citep[Section~6]{opper98}, and we also adopted it in Sections. 
+
+\subsubsection{Variational inference}
+
+In all but limited special cases, the function $L_t$ is not a simple squared exponential, resulting in a new pseudo-posterior $p(\mathbf{w}|\mathcal{D}_t, \boldsymbol{\theta}_t, C)$ of a non-standard form. Inevitably, therefore, approximations are required. When the dimension $n$ of the weight vector $\mathbf{w}$ is large, finding an accurate approximation is, in general, non-trivial. Our particular interest here is to form an approximation $p(\mathbf{w}|\boldsymbol{\theta}_{t+1})$ in which the parameters $\boldsymbol{\theta}_{t+1}$ are chosen so as to ensure that $p(\mathbf{w}|\boldsymbol{\theta}_{t+1})$ is as similar as possible to $p(\mathbf{w}|\mathcal{D}_t, \boldsymbol{\theta}_t, C)$.
+
+We consider a Kullback-Leibler (KL) approach based on fitting a Gaussian to $p(\mathbf{w}|\boldsymbol{\theta}_{t+1})$, which is the most natural choice since $p(\mathbf{w}|\boldsymbol{\theta}_t)$ is also Gaussian and $p(\mathbf{w}|\boldsymbol{\theta}_{t+1})$ serves as the prior for $p(\mathbf{w}|\mathcal{D}_{t+1}, \boldsymbol{\theta}_{t+1}, C)$. Defining
+\begin{equation}
+	\widetilde{p}(\mathbf{w}|\mathcal{D}_t, \boldsymbol{\theta}_t, C)
+	= \frac{L_t(\mathbf{w}|C)\mathcal{N}(\mathbf{w}|\mathbf{w}_t,\, \boldsymbol{\Sigma}_{t})}{Z},
+	\qquad Z = \int L_t(\mathbf{w}|C)\mathcal{N}(\mathbf{w}|\mathbf{w}_t,\, \boldsymbol{\Sigma}_{t}) \, \mathrm{d}\mathbf{w},
+\end{equation}
+and fitting a Gaussian $p(\mathbf{w}|\boldsymbol{\theta}_{t+1}) = \mathcal{N}(\mathbf{w}|\mathbf{w}_{t+1},\, \boldsymbol{\Sigma}_{t+1})$ based on minimising the KL divergence $\mathrm{KL}[p(\mathbf{w}|\boldsymbol{\theta}_{t+1}) \, || \, \widetilde{p}(\mathbf{w}|\mathcal{D}_t, \boldsymbol{\theta}_t, C)]$, we obtain the bound $\log Z \geq \mathcal{B}_{t}(\boldsymbol{\theta}_{t+1})$ with
+\begin{equation}
+\begin{split}
+	\mathcal{B}_{t}(\boldsymbol{\theta}_{t+1})
+	& \equiv -\langle\log p(\mathbf{w}|\boldsymbol{\theta}_{t+1})\rangle - \frac{1}{2}\log|2\pi\boldsymbol{\Sigma}_{t}|
+	\\
+	& \quad -\frac{1}{2}\langle(\mathbf{w} - \mathbf{w}_t)^\text{T}\boldsymbol{\Sigma}_{t}^{-1}(\mathbf{w} - \mathbf{w}_t)\rangle + \langle\log L_t(\mathbf{w}|C)\rangle,
+\end{split}
+\end{equation}
+where $\langle\cdot\rangle$ denotes the expectation with respect to $p(\mathbf{w}|\boldsymbol{\theta}_{t+1})$. One then numerically finds the best parameters $\boldsymbol{\theta}_{t+1}$ that maximise the bound.
+
+Since the entropy of a Gaussian is trivial, the only potentially problematic term in evaluating $\mathcal{B}_{t}$ is $\langle\log L_t(\mathbf{w}|C)\rangle$. An important class of functions for which $\langle\log L_t(\mathbf{w}|C)\rangle_{\mathcal{N}(\mathbf{w}|\mathbf{w}_{t+1},\, \boldsymbol{\Sigma}_{t+1})}$ is computationally tractable is when $L_t(\mathbf{w}|C) = L(\mathbf{w}^\text{T}\mathbf{x}_t|C)$ for some fixed vector $\mathbf{x}_t$\footnote{This is the case for linear hypotheses, in which $\mathbf{x}_t$ represents the input vector at time $t$, so that the loss function takes the form $\ell_{t}(\mathbf{w}) = \ell(\mathbf{w}^\text{T}\mathbf{x}_t)$.}. In this case, the projection $\mathbf{w}^\text{T}\mathbf{x}_t$ is also Gaussian distributed and we have
+\begin{equation}
+	\langle\log L(\mathbf{w}^\text{T}\mathbf{x}_t|C)\rangle_{\mathcal{N}(\mathbf{w}|\mathbf{w}_{t+1},\, \boldsymbol{\Sigma}_{t+1})}
+	= \langle\log L(y_{t+1}|C)\rangle_{\mathcal{N}(y_{t+1}|\mathbf{w}_{t+1}^\text{T}\mathbf{x}_t,\, \mathbf{x}_t^\text{T}\boldsymbol{\Sigma}_{t+1}\mathbf{x}_t)},
+\end{equation}
+which can be readily computed using any one-dimensional integration routine. Explicitly, as a function of $\boldsymbol{\theta}_{t+1}$, we have
+\begin{equation}
+\begin{split}
+	2\mathcal{B}_{t}(\boldsymbol{\theta}_{t+1})
+	&= -\log|\boldsymbol{\Sigma}_{t+1}| + n + \log|\boldsymbol{\Sigma}_{t}| - \mathrm{Tr}[\boldsymbol{\Sigma}_{t}^{-1}(\boldsymbol{\Sigma}_{t+1} + (\mathbf{w}_{t+1} - \mathbf{w}_{t})(\mathbf{w}_{t+1} - \mathbf{w}_{t})^\text{T})]
+	\\	
+	&\qquad + 2\langle\log L(y_{t+1}|C)\rangle_{\mathcal{N}(y_{t+1}|\mathbf{w}_{t+1}^\text{T}\mathbf{x}_t,\, \mathbf{x}_t^\text{T}\boldsymbol{\Sigma}_{t+1}\mathbf{x}_t)}.
+\end{split}
+\end{equation}
+Whilst, in general, the variational bounds are non-concave in their variational parameters, provided $L$ is log-concave, then $\mathcal{B}_{t}(\mathbf{w}_{t+1}, \, \boldsymbol{\Sigma}_{t+1})$ is jointly concave in $\mathbf{w}_{t+1}$ and $\boldsymbol{\Sigma}_{t+1}$. By using structured covariance matrices $\boldsymbol{\Sigma}_{t+1}$, the method is scalable to very high dimensional problems \citep{challis11}.
+
+\subsection{Online Bayesian Passive-Aggressive Classification}
+
+The case of online passive-aggressive classification, which is characterised by the hinge	-loss function $\ell_t(\mathbf{w}) = \max\{0, 1 - y_t(\mathbf{w}\cdot\mathbf{x}_t)\}$, is to be treated differently. This is because, as shown in \citep[Theorem~1]{polson&scott}, the pseudo-likelihood corresponding to the hinge loss can be represented as a location-scale mixture of Gaussians, by introducing latent variables $\lambda_t$ such that
+\begin{equation}
+	L_{t}(\mathbf{w}|\gamma)
+	= \exp\Big\{-2\gamma\max\big\{0, 1 - y_t(\mathbf{w}\cdot\mathbf{x}_t)\big\}\Big\}
+	= \int_{0}^{\infty} L_{t}(\mathbf{w}, \lambda_t|\gamma)\,\mathrm{d}\lambda_t,
+\end{equation}
+where
+\begin{equation}
+	L_{t}(\mathbf{w}, \lambda_t|\gamma)
+	= \frac{\sqrt{\gamma}}{\sqrt{2\pi\lambda_t}}\exp\Big\{-\frac{[1+\lambda_t-y_t(\mathbf{w}\cdot\mathbf{x}_t)]^2}{2\gamma^{-1}\lambda_t}\Big\}.
+\end{equation}
+This result allows us to pair observation $y_t$ with a latent variable $\lambda_t$ in such a way that $L_t$ is the \emph{marginal} counterpart of a joint pseudo-likelihood function $L_{t}(\mathbf{w}, \lambda_t|\gamma)$ in which $\mathbf{w}$ appears as part of a quadratic form. This implies that $ L_{t}(\mathbf{w}, \lambda_t|\gamma)$ is conjugate to a multivariate normal prior distribution, which in turn allows the optimality criterion of online PA classifcation to be expressed as a conditionally Gaussian linear model, for which approximate Bayesian inference is trivial. We refer the interested reader to \citep{polson&scott} and Section~\ref{sec:Bayes-PA} for further details on different inference schemes.
+
+\subsection{An Alternative Approach to Bayesian GPA Learning}
+
+The theory of normal variance-mean mixtures, alluded to in the previous paragraph, is highly flexible as it enables the derivation of a data-augmentation scheme for a class of common regularization problems. \citet{polson&scott13} demonstrate this method on several examples, including sparse quantile regression and binary logistic regression. Their work can be borrowed and adapted to develop a data-augmentation approach to Bayesian generalised passive-aggressive learning.
+ 
+
+
+
+\section{Adaptive Gradient Methods for Dynamic Online Optimisation}
+\label{sec:oo-further-work}
+
+%As we already mentioned in Section~\ref{sec:related-work}, the authors of \citep{badam} give a probabilistic interpretation of adaptive subgradient optimisation methods (in particular, ADAM \citep{adam}) so as to make probabilistic inferences regarding the weights of neural networks, and in particular, to obtain cheap uncertainty estimates thereof. Although their focus is not on developing a self-tuning scheme for the learning rate parameter, their main theoretical result, exposed in Eq. (14), can be additionally harnessed for this purpose, and it would be both of theoretical and practical importance to explore this avenue, borrowing results from Chapter~\ref{ch:oo}.
+\begin{mccorrection}
+As we already mentioned in Section~\ref{sec:related-work}, the authors of \citep{badam} give a probabilistic interpretation of adaptive optimisation algorithms (in particular, ADAM \citep{adam}) so as to make probabilistic inferences regarding the weights of neural networks, and in particular, to obtain cheap uncertainty estimates thereof. Although their focus is not on developing a self-tuning scheme for the learning rate parameter, their main theoretical result, exposed in Eq. (14), can be additionally harnessed for this purpose, and it would be both of theoretical and practical importance to explore this avenue, borrowing results from Chapter~\ref{ch:oo}.
+\end{mccorrection}
+
+
+\section{Application to Online Portfolio Selection}
+
+Our online portfolio selection experiments could be enriched with some simple extensions. Firstly, we have thus far only considered trading stocks/ETFs on a daily basis. We may wish to tackle other asset classes and/or rebalancing frequencies (potentially intra-day) that also exhibit mean-reverting patterns. For example, there is overwhelming statistical evidence on the mean reversion of interest rates, which can be monetised by trading fixed-income instruments.
+
+Long-short portfolios would form another interesting extension of our online portfolio selection framework, which is confined to long-only portfolios. Unlike the asset management industry, this type of portfolio is popular among hedge funds whose bread and butter is \emph{statistical arbitrage} (e.g., long-short equity), and so this avenue would be of extreme practical importance to such financial market participants.
